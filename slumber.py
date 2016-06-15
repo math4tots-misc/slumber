@@ -443,7 +443,7 @@ class Name(Expression):
     self.name = name  # str
 
   def accept(self, visitor):
-    return visitor.visit_name_expression(self)
+    return visitor.visit_name(self)
 
 class NumberLiteral(Expression):
   def __init__(self, token, value):
@@ -451,7 +451,7 @@ class NumberLiteral(Expression):
     self.value = value  # float
 
   def accept(self, visitor):
-    return visitor.visit_number_expression(self)
+    return visitor.visit_number_literal(self)
 
 class StringLiteral(Expression):
   def __init__(self, token, value):
@@ -459,7 +459,7 @@ class StringLiteral(Expression):
     self.value = value  # str
 
   def accept(self, visitor):
-    return visitor.visit_string_expression(self)
+    return visitor.visit_string_literal(self)
 
 class Lambda(Expression):
   def __init__(self, token, arguments, expression):
