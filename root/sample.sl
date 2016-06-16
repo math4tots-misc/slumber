@@ -9,3 +9,9 @@ def f(a, b)
 
 c = 10
 print(f(1, 5))
+
+i = 10
+if i < 10
+  print('i < 10')
+else
+  print('not (i < 10)')

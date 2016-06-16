@@ -522,6 +522,16 @@ class Or(Expression):
   def accept(self, visitor):
     return visitor.visit_or(self)
 
+class Ternary(Expression):
+  def __init__(self, token, condition, left, right):
+    super(Ternary, self).__init__(token)
+    self.condition = condition
+    self.left = left
+    self.right = right
+
+  def accept(self, visitor):
+    return visitor.visit_ternary(self)
+
 class Import(Expression):
   def __init__(self, token, uri):
     super(Import, self).__init__(token)
@@ -687,7 +697,68 @@ class Parser(object):
     return ExpressionStatement(token, e)
 
   def parse_expression(self):
-    return self.parse_additive_expression()
+    return self.parse_conditional_expression()
+
+  def parse_conditional_expression(self):
+    expr = self.parse_or_expression()
+
+    token = self.peek
+    if self.consume('if'):
+      cond = self.parse_expression()
+      self.expect('else')
+      rhs = self.parse_or_expression()
+      return Ternary(token, cond, expr, rhs)
+
+    return expr
+
+  def parse_or_expression(self):
+    expr = self.parse_and_expression()
+    token = self.peek
+    while self.consume('or'):
+      rhs = self.parse_and_expression()
+      expr = Or(token, expr, rhs)
+      token = self.peek
+    return expr
+
+  def parse_and_expression(self):
+    expr = self.parse_comparison_expression()
+    token = self.peek
+    while self.consume('and'):
+      rhs = self.parse_comparison_expression()
+      expr = And(token, expr, rhs)
+      token = self.peek
+    return expr
+
+  def parse_comparison_expression(self):
+    # TODO: Python style chained comparisons.
+    expr = self.parse_additive_expression()
+    token = self.peek
+
+    if self.consume('<'):
+      rhs = self.parse_additive_expression()
+      return operator_call(token, expr, '__lt', [rhs])
+
+    if self.consume('<='):
+      rhs = self.parse_additive_expression()
+      return operator_call(token, expr, '__le', [rhs])
+
+    if self.consume('>'):
+      rhs = self.parse_additive_expression()
+      return operator_call(token, expr, '__gt', [rhs])
+
+    if self.consume('>='):
+      rhs = self.parse_additive_expression()
+      return operator_call(token, expr, '__ge', [rhs])
+
+    if self.consume('=='):
+      rhs = self.parse_additive_expression()
+      return operator_call(token, expr, '__eq', [rhs])
+
+    if self.consume('!='):
+      rhs = self.parse_additive_expression()
+      return operator_call(token, expr, '__ne', [rhs])
+
+    return expr
 
   def parse_additive_expression(self):
     expr = self.parse_multiplicative_expression()
@@ -917,7 +988,6 @@ class JavascriptCodeGenerator(object):
   def pop_scope(self):
     used = self.used_stack.pop()
     combined = self.declare_stack + self.implicit_declare_stack
-    print(tuple(map(list, self.used_stack)), list(used), combined)
     for x in used:
       if not any(x in scope for scope in combined):
         self.used_stack[-1][x] = used[x]
@@ -1036,6 +1106,19 @@ catchAndDisplay(function() {
     self.declare_variable(node.name)
     return '\nsl%s = new slxFunction("%s", function(args) {%s%s\n});' % (
         node.name, node.name, arglist, body)
+
+  def visit_if(self, node):
+    cond, body = node.pairs[0]
+    main = '\nif (%s)%s' % (
+        self.wrap_expression_in_context(cond),
+        body.accept(self))
+    pairs = ['\nelse if (%s)%s' % (
+        self.wrap_expression_in_context(cond),
+        body.accept(self)) for cond, body in node.pairs[1:]]
+    other = ''
+    if node.other:
+      other = '\nelse ' + node.other.accept(self)
+    return '%s%s%s' % (main, ''.join(pairs), other)
 
   def wrap_expression_in_context(self, node):
     return 'slxRun(["%s", %d, "%s"], function(){return %s; })' % (

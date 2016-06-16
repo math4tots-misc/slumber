@@ -224,6 +224,11 @@ class slxNumber extends slxObject {
     checktype(args[0], slNumber);
     return new slxNumber(this.dat * args[0].dat);
   }
+  sl__lt(args) {
+    checkargs(args, 1);
+    checktype(args[0], slNumber);
+    return this.dat < args[0].dat ? sltrue : slfalse;
+  }
 }
 let slNumber = slxNumber.prototype.cls = new slxClass('Number', slxNumber);
 

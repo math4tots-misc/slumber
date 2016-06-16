@@ -227,6 +227,11 @@ class slxNumber extends slxObject {
     checktype(args[0], slNumber);
     return new slxNumber(this.dat * args[0].dat);
   }
+  sl__lt(args) {
+    checkargs(args, 1);
+    checktype(args[0], slNumber);
+    return this.dat < args[0].dat ? sltrue : slfalse;
+  }
 }
 let slNumber = slxNumber.prototype.cls = new slxClass('Number', slxNumber);
 
@@ -272,9 +277,10 @@ let MODULE_LOADERS = {
   return exports;
 },
 "sample.sl": function(exports) {
-  let slf = slnil;
+  let sli = slnil;
   let slc = slnil;
   let slx = slnil;
+  let slf = slnil;
   {
   slxRun(["sample.sl", 1, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("hello world!")]); });
   slxRun(["sample.sl", 2, "<module>"], function(){return callm(slprint, "sl__call", [callm(new slxNumber(5), "sl__add", [new slxNumber(6)])]); });
@@ -289,10 +295,18 @@ let MODULE_LOADERS = {
   return slxRun(["sample.sl", 8, "<module>"], function(){return callm(callm(sla, "sl__add", [callm(new slxNumber(5), "sl__mul", [slb])]), "sl__add", [slc]); });}
   });
   slxRun(["sample.sl", 10, "<module>"], function(){return (slc = new slxNumber(10)); });
-  slxRun(["sample.sl", 11, "<module>"], function(){return callm(slprint, "sl__call", [callm(slf, "sl__call", [new slxNumber(1), new slxNumber(5)])]); });}
-  exports.slf = slf;
+  slxRun(["sample.sl", 11, "<module>"], function(){return callm(slprint, "sl__call", [callm(slf, "sl__call", [new slxNumber(1), new slxNumber(5)])]); });
+  slxRun(["sample.sl", 13, "<module>"], function(){return (sli = new slxNumber(10)); });
+  if (slxRun(["sample.sl", 14, "<module>"], function(){return callm(sli, "sl__lt", [new slxNumber(10)]); }))
+  {
+  slxRun(["sample.sl", 15, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("i < 10")]); });}
+  else 
+  {
+  slxRun(["sample.sl", 17, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("not (i < 10)")]); });}}
+  exports.sli = sli;
   exports.slc = slc;
   exports.slx = slx;
+  exports.slf = slf;
   return exports;
 },
 };
