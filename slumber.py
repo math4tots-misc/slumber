@@ -1,5 +1,7 @@
 """slumber.py
 
+python slumber.py js root sample.sl sample.js && node sample.js
+
 Some concepts in the language:
 
 * No eval
@@ -42,11 +44,14 @@ I think Python's async/await is similar, but I felt that the explanation
 there was more clear than other explanations of the concept I've found.
 
 """
+import os  # for path.join
+import sys  # for argv
+
 #### lexer
 
 class Source(object):
   def __init__(self, uri, text):
-    self.uri = uri
+    self.uri = uri.replace('\\', '/')
     self.text = text
 
 class Token(object):
@@ -99,7 +104,7 @@ KEYWORDS = set([
   'assert', 'else', 'import', 'pass',
   'break', 'except', 'in', 'raise',
   # my keywords
-  'async', 'await',
+  'async', 'await', 'self',
 ])
 
 SYMBOLS = tuple(reversed(sorted([
@@ -341,10 +346,11 @@ class Block(Ast):
 # produce values that aren't functions or classes.
 
 class Function(Statement):
-  def __init__(self, token, decorators, name, body):
+  def __init__(self, token, decorators, name, arguments, body):
     super(FunctionStatement, self).__init__(token)
     self.decorators = decorators  # [Expression]
     self.name = name  # str
+    self.arguments = arguments  # ArgumentList
     self.body = body  # Block
 
   def accept(self, visitor):
@@ -445,6 +451,13 @@ class Name(Expression):
   def accept(self, visitor):
     return visitor.visit_name(self)
 
+class Self(Expression):
+  def __init__(self, token):
+    super(Self, self).__init__(token)
+
+  def accept(self, visitor):
+    return visitor.visit_self(self)
+
 class NumberLiteral(Expression):
   def __init__(self, token, value):
     super(NumberLiteral, self).__init__(token)
@@ -488,6 +501,14 @@ class Or(Expression):
   def accept(self, visitor):
     return visitor.visit_or(self)
 
+class Import(Expression):
+  def __init__(self, token, uri):
+    super(Import, self).__init__(token)
+    self.uri = uri
+
+  def accept(self, visitor):
+    return visitor.visit_import(self)
+
 class SetAttribute(Expression):
   def __init__(self, token, owner, name, expression):
     super(SetAttribute, self).__init__(token)
@@ -516,6 +537,9 @@ class MethodCall(Expression):
 
   def accept(self, visitor):
     return visitor.visit_method_call(self)
+
+def operator_call(token, owner, name, args):
+  return MethodCall(token, owner, name, ExpressionList(token, args, None))
 
 #### parser
 
@@ -607,7 +631,121 @@ class Parser(object):
     return ExpressionStatement(token, e)
 
   def parse_expression(self):
-    return self.parse_primary_expression()
+    return self.parse_additive_expression()
+
+  def parse_additive_expression(self):
+    expr = self.parse_multiplicative_expression()
+    while True:
+      token = self.peek
+
+      if self.consume('+'):
+        rhs = self.parse_multiplicative_expression()
+        expr = operator_call(token, expr, '__add', [rhs])
+        continue
+
+      if self.consume('-'):
+        rhs = self.parse_multiplicative_expression()
+        expr = operator_call(token, expr, '__sub', [rhs])
+        continue
+
+      break
+    return expr
+
+  def parse_multiplicative_expression(self):
+    expr = self.parse_prefix_expression()
+    while True:
+      token = self.peek
+
+      if self.consume('*'):
+        rhs = self.parse_prefix_expression()
+        expr = operator_call(token, expr, '__mul', [rhs])
+        continue
+
+      if self.consume('/'):
+        rhs = self.parse_prefix_expression()
+        expr = operator_call(token, expr, '__div', [rhs])
+        continue
+
+      if self.consume('//'):
+        rhs = self.parse_prefix_expression()
+        expr = operator_call(token, expr, '__floordiv', [rhs])
+        continue
+
+      if self.consume('%'):
+        rhs = self.parse_prefix_expression()
+        expr = operator_call(token, expr, '__mod', [rhs])
+        continue
+
+      break
+    return expr
+
+  def parse_prefix_expression(self):
+    token = self.peek
+    if self.consume('+'):
+      expr = self.parse_exponent_expression()
+      return operator_call(token, expr, '__pos', [])
+
+    if self.consume('-'):
+      expr = self.parse_exponent_expression()
+      return operator_call(token, expr, '__neg', [])
+
+    return self.parse_exponent_expression()
+
+  def parse_exponent_expression(self):
+    expr = self.parse_postfix_expression()
+    while True:
+      token = self.peek
+
+      if self.consume('**'):
+        rhs = self.parse_postfix_expression()
+        expr = operator_call(token, expr, '__pow', [rhs])
+        continue
+
+      break
+    return expr
+
+  def parse_postfix_expression(self):
+    expr = self.parse_primary_expression()
+    while True:
+      token = self.peek
+
+      if self.consume('('):
+        args = self.parse_expression_list()
+        self.expect(')')
+        expr = MethodCall(token, expr, '__call', args)
+        continue
+
+      if self.consume('.'):
+        name = self.expect('NAME').value
+        if self.consume('('):
+          args = self.parse_expression_list()
+          self.expect(')')
+          expr = MethodCall(token, expr, name, args)
+        elif self.consume('='):
+          value = self.parse_expression()
+          expr = SetAttribute(token, expr, name, value)
+        else:
+          expr = GetAttribute(token, expr, name)
+        continue
+
+      break
+    return expr
+
+  def at_expression_delimiter(self):
+    return self.at(')') or self.at('NEWLINE') or self.at(']')
+
+  def parse_expression_list(self):
+    token = self.peek
+    exprs = []
+    vararg = None
+    while not self.at_expression_delimiter():
+      if self.consume('*'):
+        vararg = self.parse_expression()
+        break
+      exprs.append(self.parse_expression())
+      if not self.at_expression_delimiter():
+        self.expect(',')
+    return ExpressionList(token, exprs, vararg)
 
   def parse_primary_expression(self):
     token = self.consume('NUMBER')
@@ -627,10 +765,205 @@ class Parser(object):
       else:
         return Name(token, name)
 
+    token = self.consume('import')
+    if token:
+      uri = self.expect('STRING').value
+      return Import(token, uri)
+
     raise ParseError(self.peek, 'expected expression')
 
 def parse(source):
   return Parser(source).parse_file_input()
+
+#### transpiler
+
+REVERSE_ESCAPE_TABLE = {v:k for k, v in ESCAPE_TABLE.items()}
+
+def escape_string(string):
+  return ''.join('\\' + c if c in REVERSE_ESCAPE_TABLE else c for c in string)
+
+class Reader(object):
+  def __init__(self, root):
+    self.root = root
+
+  def read(self, uri):
+    with open(os.path.join(self.root, uri.replace('/', os.sep))) as f:
+      return f.read()
+
+class Transpiler(object):
+  def __init__(self, reader, visitor_factory):
+    self.reader = reader
+    self.visitor_factory = visitor_factory
+    self.loaded = set()
+    self.queued = set()
+    self.modules = []
+
+  def load(self, uri, native=False):
+    if uri in self.loaded:
+      return
+
+    self.queued.add(uri)
+    raw_data = self.reader.read(uri)
+    visitor = self.visitor_factory()
+    if native:
+      data = visitor.visit_native_module(uri, raw_data)
+    else:
+      data = Parser(Source(uri, raw_data)).parse_file_input().accept(visitor)
+    for imp in visitor.native_imports:
+      if imp not in self.loaded:
+        if imp in self.queued:
+          raise Exception('circular imports detected involving %s and %s' % (
+              uri, imp))
+        else:
+          self.load(imp, native=True)
+    for imp in visitor.imports:
+      if imp not in self.loaded:
+        if imp in self.queued:
+          raise Exception('circular imports detected involving %s and %s' % (
+              uri, imp))
+        else:
+          self.load(imp)
+    self.modules.append(data)
+    self.loaded.add(uri)
+
+  def generate_code(self, main_uri):
+    visitor = self.visitor_factory()
+    return visitor.visit_modules(self.modules, main_uri)
+
+## javascript
+
+class JavascriptCodeGenerator(object):
+  def __init__(self):
+    self.native_imports = []
+    self.imports = []
+    self.context_stack = []  # for generating stack trace on exception
+    self.scope_stack = [{'print', 'nil', 'true', 'false'}, set()]
+
+  def visit_modules(self, modules, main_uri):
+    return """/* jshint esversion: 6 */
+(function() {
+"use strict";
+let slnil;
+let sltrue;
+let slfalse;
+let slprint;
+let slObject;
+let slClass;
+let slModule;
+let slNil;
+let slBool;
+let slNumber;
+let slString;
+let slList;
+let slTable;
+let slFunction;
+let slError;
+let Err;
+let slPromise;
+let loadModule;
+let slxThrow;
+let slxRun;
+let checkargs;
+let checkargsrange;
+let checkargsmin;
+let checktype;
+let callm;
+let getattr;
+let setattr;
+let makeString;
+let makeNumber;
+let MODULE_LOADERS = {%s
+};
+let LOADED_MODULES = {};
+function loadModuleRaw(uri) {
+  if (!LOADED_MODULES[uri]) {
+    if (!MODULE_LOADERS[uri]) {
+      throw new Error('No such module ' + uri);
+    }
+    let module = LOADED_MODULES[uri] = {};
+    MODULE_LOADERS[uri](module);
+  }
+  return LOADED_MODULES[uri];
+}
+function catchAndDisplay(f) {
+  try {
+    f();
+  } catch (e) {
+    if (e instanceof Err) {
+      console.log(e.toString());
+    } else {
+      throw e;
+    }
+  }
+}
+catchAndDisplay(function() {
+  loadModuleRaw("core/prelude.js");
+  loadModuleRaw("core/prelude.sl");
+  loadModuleRaw("%s");
+});
+})();
+""" % (''.join(modules), main_uri)
+
+  def visit_native_module(self, uri, data):
+    if data.startswith('/* jshint esversion: 6 */'):
+      data = data[len('/* jshint esversion: 6 */'):]
+    return """
+"%s": function(exports) {%s
+  return exports;
+},""" % (uri, data.replace('\n', '\n  '))
+
+  def visit_file_input(self, node):
+    self.scope_stack.append(set())
+    data = node.block.accept(self)
+    names = self.scope_stack.pop()
+
+    data = ''.join('\nlet sl%s = slnil;' % n for n in names) + data
+    data += ''.join('\nexports.sl%s = sl%s;' % (n, n) for n in names)
+
+    return self.visit_native_module(node.token.source.uri, data)
+
+  def visit_block(self, node):
+    return '\n{%s}' % ''.join(stmt.accept(self) for stmt in node.statements)
+
+  def wrap_expression_in_context(self, node):
+    return 'slxRun(["%s", %d, "%s"], function(){return %s; })' % (
+        node.token.source.uri,
+        node.token.line_number,
+        '.'.join(self.context_stack) or '<module>',
+        node.accept(self))
+
+  def visit_expression_statement(self, node):
+    return '\n%s;' % (self.wrap_expression_in_context(node.expression,))
+
+  def visit_method_call(self, node):
+    if node.expressions.vararg:
+      raise ParseError(node.token, 'varargs not yet supported')
+    return 'callm(%s, "sl%s", [%s])' % (
+        node.owner.accept(self),
+        node.name,
+        ', '.join(arg.accept(self) for arg in node.expressions.args))
+
+  def visit_name(self, node):
+    if not any(node.name in scope for scope in self.scope_stack):
+      raise ParseError(node.token, 'Name used before defined: ' + node.name)
+    return 'sl' + node.name
+
+  def visit_string_literal(self, node):
+    return 'makeString("%s")' % escape_string(node.value)
+
+  def visit_number_literal(self, node):
+    return 'makeNumber(%d)' % node.value
+
+  def visit_simple_assignment(self, node):
+    self.scope_stack[-1].add(node.name)
+    return '(sl%s = %s)' % (node.name, node.expression.accept(self))
+
+  def visit_import(self, node):
+    if node.uri.endswith('.js'):
+      self.native_imports.append(node.uri)
+    else:
+      self.imports.append(node.uri)
+    return 'loadModule("%s")' % node.uri
 
 #### tests
 
@@ -735,3 +1068,32 @@ FileInput(
   token=Token(source, 1, 'NAME', 'hello'))"""
 
 assert repr(result) == expected, result
+
+#### main
+
+LANGUAGE_TO_VISITOR_FACTORY_TABLE = {
+    'js': JavascriptCodeGenerator,
+}
+
+def main():
+  if len(sys.argv) != 5:
+    print('usage: python %s <language> <root> <input_uri> <output_path>' % (
+        sys.argv[0]))
+    exit(1)
+  _, language, root, input_uri, output_path = sys.argv
+  visitor_factory = LANGUAGE_TO_VISITOR_FACTORY_TABLE.get(language, None)
+  if visitor_factory is None:
+    print('language must be one of [%s] but found %s' % (
+        ', '.join(LANGUAGE_TO_VISITOR_FACTORY_TABLE), language))
+    exit(1)
+  reader = Reader(root)
+  transpiler = Transpiler(reader, visitor_factory)
+  transpiler.load('core/prelude.sl')
+  transpiler.load(input_uri)
+  output = transpiler.generate_code(input_uri)
+  with open(output_path, 'w') as f:
+    f.write(output)
+
+
+if __name__ == '__main__':
+  main()
