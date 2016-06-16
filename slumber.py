@@ -44,8 +44,18 @@ I think Python's async/await is similar, but I felt that the explanation
 there was more clear than other explanations of the concept I've found.
 
 """
-import os  # for path.join
-import sys  # for argv
+import os
+import sys
+
+#### native prludes
+
+DIR = os.path.dirname(os.path.realpath(__file__))
+
+with open(os.path.join(DIR, 'prelude.js')) as f:
+  JS_PRELUDE = f.read()
+
+if JS_PRELUDE.startswith('/* jshint esversion: 6 */'):
+  JS_PRELUDE = JS_PRELUDE[len('/* jshint esversion: 6 */'):]
 
 #### lexer
 
@@ -347,7 +357,7 @@ class Block(Ast):
 
 class Function(Statement):
   def __init__(self, token, decorators, name, arguments, body):
-    super(FunctionStatement, self).__init__(token)
+    super(Function, self).__init__(token)
     self.decorators = decorators  # [Expression]
     self.name = name  # str
     self.arguments = arguments  # ArgumentList
@@ -355,6 +365,17 @@ class Function(Statement):
 
   def accept(self, visitor):
     return visitor.visit_function(self)
+
+class Generator(Statement):
+  def __init__(self, token, decorators, name, arguments, body):
+    super(Generator, self).__init__(token)
+    self.decorators = decorators  # [Expression]
+    self.name = name  # str
+    self.arguments = arguments  # ArgumentList
+    self.body = body  # Block
+
+  def accept(self, visitor):
+    return visitor.visit_generator(self)
 
 class Class(Statement):
   def __init__(self, token, decorators, name, bases, methods):
@@ -414,7 +435,7 @@ class Continue(Statement):
     super(Continue, self).__init__(token)
 
   def accept(self, visitor):
-    return visitor.visit_continue(token)
+    return visitor.visit_continue(self)
 
 class Return(Statement):
   def __init__(self, token, expression):
@@ -422,7 +443,7 @@ class Return(Statement):
     self.expression = expression
 
   def accept(self, visitor):
-    return visitor.visit_return(token)
+    return visitor.visit_return(self)
 
 class ExpressionStatement(Statement):
   def __init__(self, token, expression):
@@ -601,6 +622,21 @@ class Parser(object):
     self.skip_newlines()
     return Block(token, stmts)
 
+  def parse_argument_list(self):
+    token = self.peek
+    args = []
+    optargs = []
+    vararg = None
+    while self.at('NAME'):
+      args.append(self.expect('NAME').value)
+      self.consume(',')
+    while self.consume('/'):
+      optargs.append(self.expect('NAME').value)
+      self.consume(',')
+    if self.consume('*'):
+      vararg = self.expect('NAME').value
+    return ArgumentList(token, args, optargs, vararg)
+
   def parse_statement(self):
     token = self.peek
 
@@ -624,6 +660,26 @@ class Parser(object):
       else:
         other = None
       return If(token, pairs, other)
+
+    if self.consume('return'):
+      e = self.parse_expression()
+      self.expect('NEWLINE')
+      return Return(token, e)
+
+    if self.at('@') or self.at('def'):
+      decorators = []
+      while self.consume('@'):
+        decorators.append(self.parse_expression())
+        self.expect('NEWLINE')
+
+      self.expect('def')
+      atype = Generator if self.consume('*') else Function
+      name = self.expect('NAME').value
+      self.expect('(')
+      args = self.parse_argument_list()
+      self.expect(')')
+      block = self.parse_block()
+      return atype(token, decorators, name, args, block)
 
     # If we get this far, it means that we have an expression statement.
     e = self.parse_expression()
@@ -827,8 +883,7 @@ class Transpiler(object):
     self.loaded.add(uri)
 
   def generate_code(self, main_uri):
-    visitor = self.visitor_factory()
-    return visitor.visit_modules(self.modules, main_uri)
+    return self.visitor_factory.visit_modules(self.modules, main_uri)
 
 ## javascript
 
@@ -837,41 +892,59 @@ class JavascriptCodeGenerator(object):
     self.native_imports = []
     self.imports = []
     self.context_stack = []  # for generating stack trace on exception
-    self.scope_stack = [{'print', 'nil', 'true', 'false'}, set()]
 
+    # These are the variables that need to be explicitly declared
+    # for each scope.
+    self.declare_stack = [set()]
+    # These are the variables that are implicitly declared for each scope
+    # (e.g. either because they are builtins or they come with
+    # the parameters of a function).
+    self.implicit_declare_stack = [{'print', 'nil', 'true', 'false'}]
+    # These are the variables that we reference in each scope.
+    # We keep track of thses so that we never hit an undefined reference
+    # error. Whenever we pop out of a scope, we check whether they have
+    # been declared somewhere. If they haven't, we move them up a scope.
+    # If any scope in the used_stack is non-empty by the time we finish
+    # parsing the file, we know that these variables were never declared
+    # where they needed to be.
+    self.used_stack = [dict()]
+
+  def push_scope(self):
+    self.declare_stack.append(set())
+    self.implicit_declare_stack.append(set())
+    self.used_stack.append(dict())
+
+  def pop_scope(self):
+    used = self.used_stack.pop()
+    combined = self.declare_stack + self.implicit_declare_stack
+    print(tuple(map(list, self.used_stack)), list(used), combined)
+    for x in used:
+      if not any(x in scope for scope in combined):
+        self.used_stack[-1][x] = used[x]
+    self.implicit_declare_stack.pop()
+    return self.declare_stack.pop()
+
+  def declare_variable(self, name):
+    self.declare_stack[-1].add(name)
+
+  def declare_implicit_variable(self, name):
+    if not any(name in scope for scope in self.used_stack):
+      self.implicit_declare_stack[-1].add(name)
+
+  def log_variable_reference(self, name, token):
+    self.used_stack[-1][name] = token
+
+  def verify_all_variables_declared(self):
+    for used in self.used_stack:
+      for name in used:
+        raise ParseError(used[name], 'Undeclared name "%s"' % name)
+
+  @classmethod
   def visit_modules(self, modules, main_uri):
     return """/* jshint esversion: 6 */
 (function() {
 "use strict";
-let slnil;
-let sltrue;
-let slfalse;
-let slprint;
-let slObject;
-let slClass;
-let slModule;
-let slNil;
-let slBool;
-let slNumber;
-let slString;
-let slList;
-let slTable;
-let slFunction;
-let slError;
-let Err;
-let slPromise;
-let loadModule;
-let slxThrow;
-let slxRun;
-let checkargs;
-let checkargsrange;
-let checkargsmin;
-let checktype;
-let callm;
-let getattr;
-let setattr;
-let makeString;
-let makeNumber;
+%s
 let MODULE_LOADERS = {%s
 };
 let LOADED_MODULES = {};
@@ -897,12 +970,11 @@ function catchAndDisplay(f) {
   }
 }
 catchAndDisplay(function() {
-  loadModuleRaw("core/prelude.js");
   loadModuleRaw("core/prelude.sl");
   loadModuleRaw("%s");
 });
 })();
-""" % (''.join(modules), main_uri)
+""" % (JS_PRELUDE, ''.join(modules), main_uri)
 
   def visit_native_module(self, uri, data):
     if data.startswith('/* jshint esversion: 6 */'):
@@ -913,9 +985,10 @@ catchAndDisplay(function() {
 },""" % (uri, data.replace('\n', '\n  '))
 
   def visit_file_input(self, node):
-    self.scope_stack.append(set())
+    self.push_scope()
     data = node.block.accept(self)
-    names = self.scope_stack.pop()
+    names = self.pop_scope()
+    self.verify_all_variables_declared()
 
     data = ''.join('\nlet sl%s = slnil;' % n for n in names) + data
     data += ''.join('\nexports.sl%s = sl%s;' % (n, n) for n in names)
@@ -925,6 +998,45 @@ catchAndDisplay(function() {
   def visit_block(self, node):
     return '\n{%s}' % ''.join(stmt.accept(self) for stmt in node.statements)
 
+  def visit_argument_list(self, node):
+    for name in node.args + node.optargs + [node.vararg]:
+      if name:
+        self.declare_implicit_variable(name)
+
+    if node.vararg:
+      check = '\ncheckargsmin(args, %d);' % len(node.args)
+    elif node.optargs:
+      check = '\ncheckargsrange(args, %d, %d);' % (
+          len(node.args), len(node.args) + len(node.optargs))
+    else:
+      check = '\ncheckargs(args, %d);' % len(node.args)
+
+    assign = ''
+    i = 0
+    for name in node.args:
+      assign += '\nlet sl%s = args[%d];' % (name, i)
+      i += 1
+    for name in node.optargs:
+      assign += '\nlet sl%s = args[%d] ? args[%d] : slnil;' % (name, i, i)
+      i += 1
+    if node.vararg:
+      assign += '\nlet sl%s = args.slice(%d);' % (node.vararg, i)
+    return check + assign
+
+  def visit_function(self, node):
+    if node.decorators:
+      raise ParseError(node.token, 'Decorators not yet supported')
+    self.push_scope()
+    arglist = node.arguments.accept(self)
+    body = node.body.accept(self)
+    names = self.pop_scope()
+
+    body = ''.join('\nlet sl%s = slnil;' % n for n in names) + body
+
+    self.declare_variable(node.name)
+    return '\nsl%s = new slxFunction("%s", function(args) {%s%s\n});' % (
+        node.name, node.name, arglist, body)
+
   def wrap_expression_in_context(self, node):
     return 'slxRun(["%s", %d, "%s"], function(){return %s; })' % (
         node.token.source.uri,
@@ -933,7 +1045,11 @@ catchAndDisplay(function() {
         node.accept(self))
 
   def visit_expression_statement(self, node):
-    return '\n%s;' % (self.wrap_expression_in_context(node.expression,))
+    return '\n%s;' % (self.wrap_expression_in_context(node.expression),)
+
+  def visit_return(self, node):
+    return '\nreturn %s;' % (
+        self.wrap_expression_in_context(node.expression),)
 
   def visit_method_call(self, node):
     if node.expressions.vararg:
@@ -944,18 +1060,17 @@ catchAndDisplay(function() {
         ', '.join(arg.accept(self) for arg in node.expressions.args))
 
   def visit_name(self, node):
-    if not any(node.name in scope for scope in self.scope_stack):
-      raise ParseError(node.token, 'Name used before defined: ' + node.name)
+    self.log_variable_reference(node.name, node.token)
     return 'sl' + node.name
 
   def visit_string_literal(self, node):
-    return 'makeString("%s")' % escape_string(node.value)
+    return 'new slxString("%s")' % escape_string(node.value)
 
   def visit_number_literal(self, node):
-    return 'makeNumber(%d)' % node.value
+    return 'new slxNumber(%d)' % node.value
 
   def visit_simple_assignment(self, node):
-    self.scope_stack[-1].add(node.name)
+    self.declare_variable(node.name)
     return '(sl%s = %s)' % (node.name, node.expression.accept(self))
 
   def visit_import(self, node):
