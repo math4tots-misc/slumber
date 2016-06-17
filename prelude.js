@@ -68,6 +68,7 @@ function slxRun(frame, f) {
     } else {
       let e2 = new Err(e);
       e2.stacktrace.push(frame);
+      e2.stack = e.stack;
       throw e2;
     }
     throw e;
@@ -183,7 +184,6 @@ class slxObject {
     slxThrow('instance of ' + this.cls.clsname + ' is not iterable');
   }
 }
-
 
 class slxClass extends slxObject {
   constructor(clsname, jscls) {

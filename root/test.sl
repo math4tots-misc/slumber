@@ -64,4 +64,23 @@ def h()
 
 assert(h == 'bb hoi', h)
 
+class X
+  def __init(name)
+    self.name = name
+
+  def sayHi()
+    return 'hi ' + self.name
+
+  def* count()
+    assert(self.sayHi() == 'hi Bob')
+    yield 10
+    yield 13
+    yield 17
+
+x = X('Bob')
+assert(x.sayHi() == 'hi Bob')
+assert(List(x.count()) == [10, 13, 17])
+
 print('tests pass!')
+
+

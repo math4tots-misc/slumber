@@ -133,9 +133,10 @@ SYMBOLS = tuple(reversed(sorted([
 ])))
 
 BUILTIN_NAMES = {
+    'Object', 'Nil', 'Bool', 'Number', 'String', 'List', 'Table', 'Function',
+    'Generator',
     'print', 'nil', 'true', 'false',
     'iter', 'len', 'id', 'repr', 'str',
-    'Number', 'String', 'List',
     'assert',
 }
 
@@ -379,9 +380,8 @@ class Function(Statement):
     return visitor.visit_function(self)
 
 class Class(Statement):
-  def __init__(self, token, decorators, name, bases, methods):
+  def __init__(self, token, name, bases, methods):
     super(Class, self).__init__(token)
-    self.decorators = decorators  # [Expression]
     self.name = name  # str
     self.bases = bases  # [Expression]
     self.methods = methods  # [FunctionStatement]
@@ -726,6 +726,23 @@ class Parser(object):
       return Function(
           token, decorators, name, args, block, is_generator, is_async)
 
+    if self.consume('class'):
+      name = self.expect('NAME').value
+      bases = []
+      if self.consume('('):
+        while not self.consume(')'):
+          bases.append(self.parse_expression())
+      self.expect('NEWLINE')
+      self.expect('INDENT')
+      methods = []
+      while not self.consume('DEDENT'):
+        methods.append(self.parse_statement())
+        if isinstance(methods[-1], Pass):
+          methods.pop()
+        elif not isinstance(methods[-1], Function):
+          raise ParseError(methods[-1].token, 'Expected method')
+      return Class(token, name, bases, methods)
+
     # If we get this far, it means that we have an expression statement.
     e = self.parse_expression()
     self.expect('NEWLINE')
@@ -934,6 +951,10 @@ class Parser(object):
       else:
         return Name(token, name)
 
+    token = self.consume('self')
+    if token:
+      return Self(token)
+
     token = self.consume('(')
     if token:
       expr = self.parse_expression()
@@ -1026,10 +1047,12 @@ class JavascriptCodeGenerator(object):
     # These are the variables that need to be explicitly declared
     # for each scope.
     self.declare_stack = [set()]
+
     # These are the variables that are implicitly declared for each scope
     # (e.g. either because they are builtins or they come with
     # the parameters of a function).
     self.implicit_declare_stack = [set(BUILTIN_NAMES)]
+
     # These are the variables that we reference in each scope.
     # We keep track of thses so that we never hit an undefined reference
     # error. Whenever we pop out of a scope, we check whether they have
@@ -1164,10 +1187,12 @@ catchAndDisplay(function() {
     if node.is_async:
       raise ParseError(node.token, 'Async functions not yet supported')
 
+    self.context_stack.append(node.name)
     self.push_scope()
     arglist = node.arguments.accept(self)
     body = node.body.accept(self)
     names = self.pop_scope()
+    self.context_stack.pop()
 
     body = ''.join('\nlet sl%s = slnil;' % n for n in names) + body
 
@@ -1179,8 +1204,42 @@ catchAndDisplay(function() {
           node.name, arglist, body)
 
     self.declare_variable(node.name)
+
     return '\nsl%s = %s;' % (
         node.name, self.wrap_with_decorators(node.decorators, f))
+
+  def visit_class(self, node):
+    if len(node.bases) > 1:
+      raise ParseError(node.token, 'Mixins are not yet supported')
+
+    b = 'slxObject'
+    if node.bases:
+      b = node.bases[0].accept(self) + '.jscls'
+
+    r = 'class slx%s extends %s {' % (node.name, b)
+    for method in node.methods:
+      self.context_stack.append(node.name + '.' + method.name)
+      self.push_scope()
+      arglist = method.arguments.accept(self)
+      body = method.body.accept(self)
+      names = self.pop_scope()
+      self.context_stack.pop()
+      body = ''.join('\nlet sl%s = slnil;' % n for n in names) + body
+      if method.is_generator:
+        r += """
+sl%s(args) {%s
+  return new slxGeneratorObject("%s", (function*%s() {%s
+  }).apply(this));
+}""" % (method.name, arglist, method.name, method.name, body)
+      else:
+        r += '\nsl%s(args) {%s%s\n}' % (method.name, arglist, body)
+
+    r += """
+}
+sl%s = slx%s.prototype.cls = new slxClass('%s', slx%s);
+""" % ((node.name,) * 4)
+    self.declare_variable(node.name)
+    return r
 
   def visit_for(self, node):
     # TODO: Make trace work if it turns out that the object we are
@@ -1208,7 +1267,7 @@ catchAndDisplay(function() {
     return '["%s", %d, "%s"]' % (
         node.token.source.uri,
         node.token.line_number,
-        '.'.join(self.context_stack) or '<module>')
+        '/'.join(self.context_stack) or '<module>')
 
   def wrap_exprstmt(self, node):
     """This is probably a serious optimization killer (try-catch makes
@@ -1224,6 +1283,7 @@ catchAndDisplay(function() {
   } else {
     let e2 = new Err(e);
     e2.stacktrace.push(%s);
+    e2.stack = e.stack;
     throw e2;
   }
   throw e;
@@ -1234,7 +1294,7 @@ catchAndDisplay(function() {
     If you use this, you can't use e.g. yield inside the expression.
     Use wrap_exprstmt if you can.
     """
-    return 'slxRun(%s, function(){return %s; })' % (
+    return 'slxRun(%s, () => %s)' % (
         self.make_frame(node), node.accept(self))
 
   def visit_expression_statement(self, node):
@@ -1260,6 +1320,9 @@ catchAndDisplay(function() {
     self.log_variable_reference(node.name, node.token)
     return 'sl' + node.name
 
+  def visit_self(self, node):
+    return 'this'
+
   def visit_string_literal(self, node):
     return 'new slxString("%s")' % escape_string(node.value)
 
@@ -1273,6 +1336,15 @@ catchAndDisplay(function() {
   def visit_simple_assignment(self, node):
     self.declare_variable(node.name)
     return '(sl%s = %s)' % (node.name, node.expression.accept(self))
+
+  def visit_set_attribute(self, node):
+    return 'setattr(%s, "sl%s", %s)' % (
+        node.owner.accept(self),
+        node.name,
+        node.expression.accept(self))
+
+  def visit_get_attribute(self, node):
+    return 'getattr(%s, "sl%s")' % (node.owner.accept(self), node.name)
 
   def visit_yield(self, node):
     return '(yield %s)' % (node.expression.accept(self),)
