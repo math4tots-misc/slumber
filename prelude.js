@@ -19,7 +19,6 @@
 // let slPromise;
 // let loadModule;
 // let slxThrow;
-// let slxRun;
 // let checkargs;
 // let checkargsrange;
 // let checkargsmin;
@@ -103,8 +102,8 @@ function checktype(arg, t) {
 function callm(target, methodName, args) {
   if (!target[methodName]) {
     slxThrow(
-        'No method named ' + methodName + ' in instance of type ' +
-        target.cls.clsname);
+        'No method named "' + methodName.slice(2) +
+        '" in instance of type ' + target.cls.clsname);
   }
   let result = target[methodName](args);
   return result ? result : slnil;
@@ -113,8 +112,8 @@ function callm(target, methodName, args) {
 function getattr(target, attributeName) {
   if (!target.attrs[attributeName]) {
     slxThrow(
-        'No attribute named ' + attributeName + ' in instance of type ' +
-        target.cls.clsname);
+        'No attribute named "' + attributeName.slice(2) +
+        '" in instance of type ' + target.cls.clsname);
   }
   return target.attrs[attributeName];
 }
@@ -132,17 +131,43 @@ class slxObject {
     this.attrs = {};
   }
   truthy() {
-    return callm(this, 'sl__bool', []);
+    return callm(this, 'sl__bool', []).truthy();
   }
   isA(cls) {
     return this instanceof cls.jscls;
+  }
+  [Symbol.iterator]() {
+    return callm(this, 'sl__iter', []);
+  }
+  next() {
+    if (callm(this, 'sl__more', []).truthy()) {
+      return {done: false, value: callm(this, 'sl__next', [])};
+    } else {
+      return {done: true};
+    }
+  }
+  toString() {
+    let result = callm(this, 'sl__str', []);
+    if (!(result instanceof slxString)) {
+      slxThrow('__str returned a non-string');
+    }
+    return result.dat;
   }
   // sl methods
   sl__init(args) {
     checkargs(args, 0);
   }
+  sl__eq(args) {
+    checkargs(args, 1);
+    return this === args[0];
+  }
+  sl__ne(args) {
+    checkargs(args, 1);
+    return callm(this, 'sl__eq', args).truthy() ? slfalse : sltrue;
+  }
   sl__bool(args) {
     checkargs(args, 0);
+    return sltrue;
   }
   sl__str(args) {
     checkargs(args, 0);
@@ -152,6 +177,10 @@ class slxObject {
     checkargs(args, 0);
     return new slxString(
         '<' + this.cls.clsname + ' instance ' + this.objid + '>');
+  }
+  sl__iter(args) {
+    checkargs(args, 0);
+    slxThrow('instance of ' + this.cls.clsname + ' is not iterable');
   }
 }
 
@@ -164,7 +193,7 @@ class slxClass extends slxObject {
     this.cls = this;
   }
   sl__call(args) {
-    let instance = new this.jscl();
+    let instance = new this.jscls();
     instance.cls = this;
     callm(instance, 'sl__init', args);
     return instance;
@@ -196,6 +225,12 @@ class slxBool extends slxObject {
     super();
     this.dat = dat;
   }
+  truthy() {
+    return this.dat;
+  }
+  sl__bool(args) {
+    return this;
+  }
   sl__repr(args) {
     checkargs(args, 0);
     return new slxString(this.dat ? 'true' : 'false');
@@ -209,6 +244,12 @@ class slxNumber extends slxObject {
   constructor(dat) {
     super();
     this.dat = dat;
+  }
+  sl__eq(args) {
+    checkargs(args, 1);
+    return (
+        args[0] instanceof slxNumber && args[0].dat === this.dat ?
+        sltrue : slfalse);
   }
   sl__repr(args) {
     checkargs(args, 0);
@@ -237,6 +278,12 @@ class slxString extends slxObject {
     super();
     this.dat = dat;
   }
+  sl__eq(args) {
+    checkargs(args, 1);
+    return (
+        args[0] instanceof slxString && args[0].dat === this.dat ?
+        sltrue : slfalse);
+  }
   sl__str(args) {
     checkargs(args, 0);
     return this;
@@ -248,6 +295,59 @@ class slxString extends slxObject {
   }
 }
 let slString = slxString.prototype.cls = new slxClass('String', slxString);
+
+class slxList extends slxObject {
+  constructor(dat) {
+    super();
+    this.dat = dat;
+  }
+  sl__init(args) {
+    checkargs(args, 1);
+    this.dat = Array.from(args[0]);
+  }
+  sl__eq(args) {
+    checkargs(args, 1);
+    if (!(args[0] instanceof slxList)) {
+      return slfalse;
+    }
+    let xs = this.dat, ys = args[0].dat;
+    if (xs.length !== ys.length) {
+      return slfalse;
+    }
+    for (let i = 0; i < xs.length; i++) {
+      if (!callm(xs[i], 'sl__eq', [ys[i]]).truthy()) {
+        return slfalse;
+      }
+    }
+    return sltrue;
+  }
+  sl__iter(args) {
+    return new slxGeneratorObject('__iter', (function* gen() {
+      for (let x of this.dat) {
+        yield x;
+      }
+    }).apply(this));
+  }
+  sl__repr(args) {
+    checkargs(args, 0);
+    let r = '[';
+    let comma = false;
+    for (let x of this.dat) {
+      if (comma) {
+        r += ', ';
+      }
+      r += x.toString();
+      comma = true;
+    }
+    r += ']';
+    return new slxString(r);
+  }
+  slpush(args) {
+    checkargs(args, 1);
+    this.dat.push(args[0]);
+  }
+}
+let slList = slxList.prototype.cls = new slxClass('List', slxList);
 
 class slxFunction extends slxObject {
   constructor(fname, dat) {
@@ -265,5 +365,60 @@ let slprint = new slxFunction('print', function(args) {
   checkargs(args, 1);
   console.log(callm(args[0], 'sl__str', []).dat);
 });
+let sliter = new slxFunction('iter', function(args) {
+  checkargs(args, 1);
+  return callm(args[0], 'sl__iter', []);
+});
+let slrepr = new slxFunction('repr', function(args) {
+  checkargs(args, 1);
+  return callm(args[0], 'sl__repr', []);
+});
+let slassert = new slxFunction('assert', function(args) {
+  checkargsrange(args, 1, 2);
+  if (!args[0].truthy()) {
+    let message = args[1] ? args[1].toString() : 'assertion failed';
+    slxThrow(message);
+  }
+});
 
+class slxGenerator extends slxObject {
+  constructor(fname, dat) {
+    super();
+    this.fname = fname;
+    this.dat = dat;
+  }
+  sl__call(args) {
+    return new slxGeneratorObject(this.fname, this.dat(args));
+  }
+}
+let slGenerator = slxGenerator.prototype.cls = new slxClass(
+    'Generator', slxGenerator);
 
+class slxGeneratorObject extends slxObject {
+  constructor(fname, dat) {
+    super();
+    this.fname = fname;
+    this.dat = dat;
+    this.peek = dat.next();
+  }
+  sl__iter(args) {
+    checkargs(args, 0);
+    return this;
+  }
+  sl__more(args) {
+    checkargs(args, 0);
+    return this.peek.done ? slfalse : sltrue;
+  }
+  sl__next(args) {
+    checkargs(args, 0);
+    if (this.peek.done) {
+      slxThrow('Tried to call __next on a finished generator object');
+    }
+    let ret = this.peek.value;
+    this.peek = this.dat.next();
+    return ret;
+  }
+}
+
+let slGeneratorObject = slxGeneratorObject.prototype.cls = new slxClass(
+    'GeneratorObject', slxGeneratorObject);

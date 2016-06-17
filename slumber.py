@@ -111,7 +111,8 @@ KEYWORDS = set([
   'True', 'def', 'from', 'nonlocal', 'while',
   'and', 'del', 'global', 'not', 'with',
   'as', 'elif', 'if', 'or', 'yield',
-  'assert', 'else', 'import', 'pass',
+  # 'assert',  # assert is not a keyword in slumber
+  'else', 'import', 'pass',
   'break', 'except', 'in', 'raise',
   # my keywords
   'async', 'await', 'self',
@@ -130,6 +131,13 @@ SYMBOLS = tuple(reversed(sorted([
   # -- ellipsis -- special token.
   '...',
 ])))
+
+BUILTIN_NAMES = {
+    'print', 'nil', 'true', 'false',
+    'iter', 'len', 'id', 'repr', 'str',
+    'Number', 'String', 'List',
+    'assert',
+}
 
 def is_wordchar(c):
   return c == '_' or c.isalnum()
@@ -488,6 +496,14 @@ class StringLiteral(Expression):
   def accept(self, visitor):
     return visitor.visit_string_literal(self)
 
+class ListDisplay(Expression):
+  def __init__(self, token, expressions):
+    super(ListDisplay, self).__init__(token)
+    self.expressions = expressions  # ExpressionList
+
+  def accept(self, visitor):
+    return visitor.visit_list_display(self)
+
 class Lambda(Expression):
   def __init__(self, token, arguments, expression):
     super(Lambda, self).__init__(token)
@@ -522,6 +538,14 @@ class Or(Expression):
 
   def accept(self, visitor):
     return visitor.visit_or(self)
+
+class Not(Expression):
+  def __init__(self, token, expression):
+    super(Not, self).__init__(token)
+    self.expression = expression  # Expression
+
+  def accept(self, visitor):
+    return visitor.visit_not(self)
 
 class Ternary(Expression):
   def __init__(self, token, condition, left, right):
@@ -672,6 +696,14 @@ class Parser(object):
         other = None
       return If(token, pairs, other)
 
+    if self.consume('for'):
+      name = self.expect('NAME').value
+      self.expect('in')
+      cont = self.parse_expression()
+      self.expect('NEWLINE')
+      body = self.parse_block()
+      return For(token, name, cont, body)
+
     if self.consume('return'):
       e = self.parse_expression()
       self.expect('NEWLINE')
@@ -724,13 +756,20 @@ class Parser(object):
     return expr
 
   def parse_and_expression(self):
-    expr = self.parse_comparison_expression()
+    expr = self.parse_not_expression()
     token = self.peek
     while self.consume('and'):
-      rhs = self.parse_comparison_expression()
+      rhs = self.parse_not_expression()
       expr = And(token, expr, rhs)
       token = self.peek
     return expr
+
+  def parse_not_expression(self):
+    token = self.consume('not')
+    if token:
+      return Not(token, self.parse_comparison_expression())
+    else:
+      return self.parse_comparison_expression()
 
   def parse_comparison_expression(self):
     # TODO: Python style chained comparisons.
@@ -895,6 +934,18 @@ class Parser(object):
       else:
         return Name(token, name)
 
+    token = self.consume('(')
+    if token:
+      expr = self.parse_expression()
+      self.expect(')')
+      return expr
+
+    token = self.consume('[')
+    if token:
+      exprlist = self.parse_expression_list()
+      self.expect(']')
+      return ListDisplay(token, exprlist)
+
     token = self.consume('import')
     if token:
       uri = self.expect('STRING').value
@@ -978,7 +1029,7 @@ class JavascriptCodeGenerator(object):
     # These are the variables that are implicitly declared for each scope
     # (e.g. either because they are builtins or they come with
     # the parameters of a function).
-    self.implicit_declare_stack = [{'print', 'nil', 'true', 'false'}]
+    self.implicit_declare_stack = [set(BUILTIN_NAMES)]
     # These are the variables that we reference in each scope.
     # We keep track of thses so that we never hit an undefined reference
     # error. Whenever we pop out of a scope, we check whether they have
@@ -1110,20 +1161,35 @@ catchAndDisplay(function() {
     return result
 
   def visit_function(self, node):
-    if node.decorators:
-      raise ParseError(node.token, 'Decorators not yet supported')
+    if node.is_async:
+      raise ParseError(node.token, 'Async functions not yet supported')
+
     self.push_scope()
     arglist = node.arguments.accept(self)
     body = node.body.accept(self)
     names = self.pop_scope()
 
     body = ''.join('\nlet sl%s = slnil;' % n for n in names) + body
-    f = 'new slxFunction("%s", function(args) {%s%s\n})' % (
-        node.name, arglist, body)
+
+    if node.is_generator:
+      f = 'new slxGenerator("%s", function*(args) {%s%s\n})' % (
+          node.name, arglist, body)
+    else:
+      f = 'new slxFunction("%s", function(args) {%s%s\n})' % (
+          node.name, arglist, body)
 
     self.declare_variable(node.name)
     return '\nsl%s = %s;' % (
         node.name, self.wrap_with_decorators(node.decorators, f))
+
+  def visit_for(self, node):
+    # TODO: Make trace work if it turns out that the object we are
+    # trying to iterate over is not actually iterable.
+    self.declare_variable(node.name)
+    return '\nfor (sl%s of %s)%s' % (
+        node.name,
+        self.wrap_expression_in_context(node.expression),
+        node.body.accept(self))
 
   def visit_if(self, node):
     cond, body = node.pairs[0]
@@ -1138,27 +1204,57 @@ catchAndDisplay(function() {
       other = '\nelse ' + node.other.accept(self)
     return '%s%s%s' % (main, ''.join(pairs), other)
 
-  def wrap_expression_in_context(self, node):
-    return 'slxRun(["%s", %d, "%s"], function(){return %s; })' % (
+  def make_frame(self, node):
+    return '["%s", %d, "%s"]' % (
         node.token.source.uri,
         node.token.line_number,
-        '.'.join(self.context_stack) or '<module>',
-        node.accept(self))
+        '.'.join(self.context_stack) or '<module>')
+
+  def wrap_exprstmt(self, node):
+    """This is probably a serious optimization killer (try-catch makes
+    functions unoptimizable),
+    but I can't think of any other way to get certain functionality to
+    work, e.g. 'yield'. I can't wrap 'yield' in a function to pass
+    to slxRun.
+    """
+    frame = self.make_frame(node)
+    return """try { %s; } catch (e) {
+  if (e instanceof Err) {
+    e.stacktrace.push(%s);
+  } else {
+    let e2 = new Err(e);
+    e2.stacktrace.push(%s);
+    throw e2;
+  }
+  throw e;
+}""" % (node.accept(self), frame, frame)
+
+  def wrap_expression_in_context(self, node):
+    """DEPRECATED.
+    If you use this, you can't use e.g. yield inside the expression.
+    Use wrap_exprstmt if you can.
+    """
+    return 'slxRun(%s, function(){return %s; })' % (
+        self.make_frame(node), node.accept(self))
 
   def visit_expression_statement(self, node):
-    return '\n%s;' % (self.wrap_expression_in_context(node.expression),)
+    return '\n%s' % (self.wrap_exprstmt(node.expression),)
 
   def visit_return(self, node):
     return '\nreturn %s;' % (
         self.wrap_expression_in_context(node.expression),)
 
-  def visit_method_call(self, node):
-    if node.expressions.vararg:
+  def visit_expression_list(self, node):
+    if node.vararg:
       raise ParseError(node.token, 'varargs not yet supported')
-    return 'callm(%s, "sl%s", [%s])' % (
+    return '[%s]' % (
+        ', '.join(arg.accept(self) for arg in node.args),)
+
+  def visit_method_call(self, node):
+    return 'callm(%s, "sl%s", %s)' % (
         node.owner.accept(self),
         node.name,
-        ', '.join(arg.accept(self) for arg in node.expressions.args))
+        node.expressions.accept(self))
 
   def visit_name(self, node):
     self.log_variable_reference(node.name, node.token)
@@ -1170,9 +1266,20 @@ catchAndDisplay(function() {
   def visit_number_literal(self, node):
     return 'new slxNumber(%d)' % node.value
 
+  def visit_list_display(self, node):
+    return 'new slxList(%s)'  % (
+        self.visit_expression_list(node.expressions),)
+
   def visit_simple_assignment(self, node):
     self.declare_variable(node.name)
     return '(sl%s = %s)' % (node.name, node.expression.accept(self))
+
+  def visit_yield(self, node):
+    return '(yield %s)' % (node.expression.accept(self),)
+
+  def visit_not(self, node):
+    return '((%s).truthy() ? slfalse : sltrue)' % (
+        node.expression.accept(self),)
 
   def visit_import(self, node):
     if node.uri.endswith('.js'):
@@ -1303,10 +1410,14 @@ def main():
         ', '.join(LANGUAGE_TO_VISITOR_FACTORY_TABLE), language))
     exit(1)
   reader = Reader(root)
-  transpiler = Transpiler(reader, visitor_factory)
-  transpiler.load('core/prelude.sl')
-  transpiler.load(input_uri)
-  output = transpiler.generate_code(input_uri)
+  try:
+    transpiler = Transpiler(reader, visitor_factory)
+    transpiler.load('core/prelude.sl')
+    transpiler.load(input_uri)
+    output = transpiler.generate_code(input_uri)
+  except ParseError as e:
+    print(str(e).strip())
+    exit(1)
   with open(output_path, 'w') as f:
     f.write(output)
 
