@@ -81,6 +81,37 @@ x = X('Bob')
 assert(x.sayHi() == 'hi Bob')
 assert(List(x.count()) == [10, 13, 17])
 
+@addMethodTo(X)
+def foo()
+  return 'bar'
+
+assert(x.foo() == 'bar')
+
+xs = [5, 6, 7]
+assert(len(xs) == 3, len(xs))
+assert(xs[0] == 5, xs[0])
+assert(xs[1] == 6, xs[1])
+assert(xs[2] == 7, xs[2])
+r = (xs[1] = 11)
+assert(r == 11, r)
+assert(xs[1] == 11, xs[1])
+
+assert(5 < 10)
+assert(not (10 < 5))
+
+i = 0
+while i < 10
+  print(i)
+  i = i + 1
+print(i)
+
+# For testing 'sync', just verify that the code in the block
+# runs.
+x = false
+sync
+  x = true
+assert(x)
+
 print('tests pass!')
 
 

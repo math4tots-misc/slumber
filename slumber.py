@@ -115,7 +115,8 @@ KEYWORDS = set([
   'else', 'import', 'pass',
   'break', 'except', 'in', 'raise',
   # my keywords
-  'async', 'await', 'self',
+  'self', 'super',
+  'async', 'await', 'sync',
 ])
 
 SYMBOLS = tuple(reversed(sorted([
@@ -138,6 +139,7 @@ BUILTIN_NAMES = {
     'print', 'nil', 'true', 'false',
     'iter', 'len', 'id', 'repr', 'str',
     'assert',
+    'addMethodTo',
 }
 
 def is_wordchar(c):
@@ -395,6 +397,14 @@ class Pass(Statement):
 
   def accept(self, visitor):
     return visitor.visit_pass(self)
+
+class Sync(Statement):
+  def __init__(self, token, body):
+    super(Sync, self).__init__(token)
+    self.body = body
+
+  def accept(self, visitor):
+    return visitor.visit_sync(self)
 
 class If(Statement):
   def __init__(self, token, pairs, other):
@@ -679,6 +689,11 @@ class Parser(object):
       self.expect('NEWLINE')
       return Pass(token)
 
+    if self.consume('sync'):
+      self.expect('NEWLINE')
+      body = self.parse_block()
+      return Sync(token, body)
+
     if self.consume('if'):
       cond = self.parse_expression()
       self.expect('NEWLINE')
@@ -696,6 +711,12 @@ class Parser(object):
         other = None
       return If(token, pairs, other)
 
+    if self.consume('while'):
+      cond = self.parse_expression()
+      self.expect('NEWLINE')
+      body = self.parse_block()
+      return While(token, cond, body)
+
     if self.consume('for'):
       name = self.expect('NAME').value
       self.expect('in')
@@ -703,6 +724,12 @@ class Parser(object):
       self.expect('NEWLINE')
       body = self.parse_block()
       return For(token, name, cont, body)
+
+    if self.consume('break'):
+      return Break(token)
+
+    if self.consume('continue'):
+      return Continue(token)
 
     if self.consume('return'):
       e = self.parse_expression()
@@ -912,6 +939,16 @@ class Parser(object):
           expr = SetAttribute(token, expr, name, value)
         else:
           expr = GetAttribute(token, expr, name)
+        continue
+
+      if self.consume('['):
+        arg = self.parse_expression()
+        self.expect(']')
+        if self.consume('='):
+          val = self.parse_expression()
+          expr = operator_call(token, expr, '__setitem', [arg, val])
+        else:
+          expr = operator_call(token, expr, '__getitem', [arg])
         continue
 
       break
@@ -1241,6 +1278,14 @@ sl%s = slx%s.prototype.cls = new slxClass('%s', slx%s);
     self.declare_variable(node.name)
     return r
 
+  def visit_pass(self, node):
+    return ''
+
+  def visit_sync(self, node):
+    # In javascript, 'sync' is basically a no-op, since
+    # we are always single threaded.
+    return node.body.accept(self)
+
   def visit_for(self, node):
     # TODO: Make trace work if it turns out that the object we are
     # trying to iterate over is not actually iterable.
@@ -1248,6 +1293,11 @@ sl%s = slx%s.prototype.cls = new slxClass('%s', slx%s);
     return '\nfor (sl%s of %s)%s' % (
         node.name,
         self.wrap_expression_in_context(node.expression),
+        node.body.accept(self))
+
+  def visit_while(self, node):
+    return '\nwhile ((%s).truthy())%s' % (
+        self.wrap_expression_in_context(node.condition),
         node.body.accept(self))
 
   def visit_if(self, node):

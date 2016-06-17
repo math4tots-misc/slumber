@@ -1,31 +1,7 @@
 /* jshint esversion: 6 */
 
-// let slnil;
-// let sltrue;
-// let slfalse;
-// let slprint;
-// let slObject;
-// let slClass;
-// let slModule;
-// let slNil;
-// let slBool;
-// let slNumber;
-// let slString;
-// let slList;
 // let slTable;
-// let slFunction;
-// let slError;
-// let Err;
 // let slPromise;
-// let loadModule;
-// let slxThrow;
-// let checkargs;
-// let checkargsrange;
-// let checkargsmin;
-// let checktype;
-// let callm;
-// let getattr;
-// let setattr;
 
 let MODULE_CACHE = {};
 function loadModule(uri) {
@@ -301,9 +277,34 @@ class slxList extends slxObject {
     super();
     this.dat = dat;
   }
+  checkindex(i) {
+    if (i !== Math.floor(i)) {
+      slxThrow('Index is not an integer i = ' + i);
+    }
+    let xs = this.dat;
+    if (i < 0 || i >= xs.length) {
+      slxThrow('Indexed list out of bounds i = ' + i + 'len = ' + xs.length);
+    }
+  }
   sl__init(args) {
     checkargs(args, 1);
     this.dat = Array.from(args[0]);
+  }
+  sl__len(args) {
+    checkargs(args, 0);
+    return new slxNumber(this.dat.length);
+  }
+  sl__getitem(args) {
+    checkargs(args, 1);
+    checktype(args[0], slNumber);
+    this.checkindex(args[0].dat);
+    return this.dat[args[0].dat];
+  }
+  sl__setitem(args) {
+    checkargs(args, 2);
+    checktype(args[0], slNumber);
+    this.checkindex(args[0].dat);
+    return (this.dat[args[0]] = args[1]);
   }
   sl__eq(args) {
     checkargs(args, 1);
@@ -369,6 +370,10 @@ let sliter = new slxFunction('iter', function(args) {
   checkargs(args, 1);
   return callm(args[0], 'sl__iter', []);
 });
+let sllen = new slxFunction('len', function(args) {
+  checkargs(args, 1);
+  return callm(args[0], 'sl__len', []);
+});
 let slrepr = new slxFunction('repr', function(args) {
   checkargs(args, 1);
   return callm(args[0], 'sl__repr', []);
@@ -379,6 +384,24 @@ let slassert = new slxFunction('assert', function(args) {
     let message = args[1] ? args[1].toString() : 'assertion failed';
     slxThrow(message);
   }
+});
+let sladdMethodTo = new slxFunction('addMethodTo', function(args) {
+  checkargs(args, 1);
+  checktype(args[0], slClass);
+  let cls = args[0];
+  return new slxFunction('addMethodTo.<wrapper>', function(args) {
+    checkargs(args, 1);
+    let f;
+    if (args[0].isA(slGenerator)) {
+      f = function() {
+        return new slxGeneratorObject(args[0].fname, args[0].dat.apply(this));
+      };
+    } else {
+      checktype(args[0], slFunction);
+      f = args[0].dat;
+    }
+    cls.jscls.prototype['sl' + args[0].fname] = args[0].dat;
+  });
 });
 
 class slxGenerator extends slxObject {
