@@ -455,10 +455,16 @@ class ExpressionList extends Ast {
 
 class Expression extends Ast {}
 
+class Self extends Expression {
+  accept(visitor) {
+    return visitor.visitSelf(this);
+  }
+}
+
 class NumberLiteral extends Expression {
   constructor(token, val) {
     super(token);
-    this.val = val;
+    this.val = val;  // number
   }
 
   accept(visitor) {
@@ -466,30 +472,202 @@ class NumberLiteral extends Expression {
   }
 }
 
-class Name extends Expression {
-  constructor(token, nam) {
+class StringLiteral extends Expression {
+  constructor(token, val) {
     super(token);
-    this.nam = nam;
+    this.val = val;  // string
   }
 
   accept(visitor) {
-    visitor.visitName(this);
+    return visitor.visitStringLiteral(this);
+  }
+}
+
+class Name extends Expression {
+  constructor(token, nam) {
+    super(token);
+    this.nam = nam;  // string
+  }
+
+  accept(visitor) {
+    return visitor.visitName(this);
   }
 }
 
 class SimpleAssignment extends Expression {
-  constructor(token, nam, expression) {
+  constructor(token, nam, expr) {
     super(token);
-    this.nam = nam;
-    this.expression = expression;
+    this.nam = nam;  // string
+    this.expr = expr;  // Expression
   }
 
   accept(visitor) {
-    visitor.visitSimpleAssignment(this);
+    return visitor.visitSimpleAssignment(this);
   }
 }
 
+class GetAttribute extends Expression {
+  constructor(token, owner, nam) {
+    super(token);
+    this.owner = owner;  // Expression
+    this.nam = nam;  // string
+  }
 
+  accept(visitor) {
+    return visitor.visitGetAttribute(this);
+  }
+}
+
+class SetAttribute extends Expression {
+  constructor(token, owner, nam, expr) {
+    super(token);
+    this.owner = owner;  // Expression
+    this.nam = nam;  // string
+    this.expr = expr;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitSetAttribute(this);
+  }
+}
+
+class MethodCall extends Expression {
+  constructor(token, owner, nam, exprlist) {
+    super(token);
+    this.owner = owner;  // Expression
+    this.nam = nam;  // string
+    this.exprlist = exprlist;  // ExpressionList
+  }
+
+  accept(visitor) {
+    return visitor.visitMethodCall(this);
+  }
+}
+
+class SuperMethodCall extends Expression {
+  constructor(token, nam, expr) {
+    super(token);
+    this.nam = nam;  // string
+    this.expr = expr;  // ExpressionList
+  }
+
+  accept(visitor) {
+    return visitor.visitSuperMethodCall(this);
+  }
+}
+
+class And extends Expression {
+  constructor(token, lhs, rhs) {
+    super(token);
+    this.lhs = lhs;  // Expression
+    this.rhs = rhs;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitAnd(this);
+  }
+}
+
+class Or extends Expression {
+  constructor(token, lhs, rhs) {
+    super(token);
+    this.lhs = lhs;  // Expression
+    this.rhs = rhs;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitOr(this);
+  }
+}
+
+class Ternary extends Expression {
+  constructor(token, cond, lhs, rhs) {
+    super(token);
+    this.cond = cond;  // Expression
+    this.lhs = lhs;  // Expression
+    this.rhs = rhs;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitTernary(this);
+  }
+}
+
+class Lambda extends Expression {
+  constructor(token, arglist, expr) {
+    super(token);
+    this.arglist = arglist;  // ArgumentList
+    this.expr = expr;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitLambda(this);
+  }
+}
+
+class Yield extends Expression {
+  constructor(token, expr) {
+    super(token);
+    this.expr = expr;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitYield(this);
+  }
+}
+
+class Import extends Expression {
+  constructor(token, uri) {
+    super(token);
+    this.uri = uri;  // string
+  }
+
+  accept(visitor) {
+    return visitor.visitImport(this);
+  }
+}
+
+class Statement extends Ast {}
+
+class ExpressionStatement extends Statement {
+  constructor(token, expr) {
+    super(token);
+    this.expr = expr;  // Expression
+  }
+
+  accept(visitor) {
+    return visitor.visitExpressionStatement(this);
+  }
+}
+
+class Function extends Statement {
+  constructor(token, decorators, nam, arglist, bod, isGen, isAsync) {
+    super(token);
+    this.decorators = decorators;  // [Expression]
+    this.nam = nam;  // string
+    this.arglist = arglist;  // ArgumentList
+    this.bod = bod;  // Block
+    this.isGen = isGen;  // bool
+    this.isAsync = isAsync;  // bool
+  }
+
+  accept(visitor) {
+    return visitor.visitFunction(this);
+  }
+}
+
+class Class extends Statement {
+  constructor(token, nam, bases, methods) {
+    super(token);
+    this.nam = nam;
+    this.bases = bases;
+    this.methods = methods;
+  }
+
+  accept(visitor) {
+    return visitor.visitClass(this);
+  }
+}
 
 ////// tests
 
