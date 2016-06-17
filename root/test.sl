@@ -64,4 +64,4 @@ def h()
 
 assert(h == 'bb hoi', h)
 
-print('sample tests pass')
+print('tests pass!')
