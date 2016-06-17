@@ -277,10 +277,11 @@ let MODULE_LOADERS = {
   return exports;
 },
 "sample.sl": function(exports) {
+  let slg = slnil;
   let sli = slnil;
-  let slc = slnil;
-  let slx = slnil;
   let slf = slnil;
+  let slx = slnil;
+  let slc = slnil;
   {
   slxRun(["sample.sl", 1, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("hello world!")]); });
   slxRun(["sample.sl", 2, "<module>"], function(){return callm(slprint, "sl__call", [callm(new slxNumber(5), "sl__add", [new slxNumber(6)])]); });
@@ -302,11 +303,17 @@ let MODULE_LOADERS = {
   slxRun(["sample.sl", 15, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("i < 10")]); });}
   else 
   {
-  slxRun(["sample.sl", 17, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("not (i < 10)")]); });}}
+  slxRun(["sample.sl", 17, "<module>"], function(){return callm(slprint, "sl__call", [new slxString("not (i < 10)")]); });}
+  slg = new slxFunction("g", function(args) {
+  checkargs(args, 0);
+  {
+  return slxRun(["sample.sl", 20, "<module>"], function(){return new slxNumber(5); });}
+  });}
+  exports.slg = slg;
   exports.sli = sli;
-  exports.slc = slc;
-  exports.slx = slx;
   exports.slf = slf;
+  exports.slx = slx;
+  exports.slc = slc;
   return exports;
 },
 };

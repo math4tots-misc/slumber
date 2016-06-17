@@ -356,26 +356,19 @@ class Block(Ast):
 # produce values that aren't functions or classes.
 
 class Function(Statement):
-  def __init__(self, token, decorators, name, arguments, body):
+  def __init__(
+      self, token, decorators, name, arguments, body,
+      is_generator, is_async):
     super(Function, self).__init__(token)
     self.decorators = decorators  # [Expression]
     self.name = name  # str
     self.arguments = arguments  # ArgumentList
     self.body = body  # Block
+    self.is_generator = is_generator  # bool
+    self.is_async = is_async  # bool
 
   def accept(self, visitor):
     return visitor.visit_function(self)
-
-class Generator(Statement):
-  def __init__(self, token, decorators, name, arguments, body):
-    super(Generator, self).__init__(token)
-    self.decorators = decorators  # [Expression]
-    self.name = name  # str
-    self.arguments = arguments  # ArgumentList
-    self.body = body  # Block
-
-  def accept(self, visitor):
-    return visitor.visit_generator(self)
 
 class Class(Statement):
   def __init__(self, token, decorators, name, bases, methods):
@@ -503,6 +496,14 @@ class Lambda(Expression):
 
   def accept(self, visitor):
     return visitor.visit_lambda(self)
+
+class Yield(Expression):
+  def __init__(self, token, expression):
+    super(Yield, self).__init__(token)
+    self.expression = expression  # Expression
+
+  def accept(self, visitor):
+    return visitor.visit_yield(self)
 
 class And(Expression):
   def __init__(self, token, left, right):
@@ -676,20 +677,22 @@ class Parser(object):
       self.expect('NEWLINE')
       return Return(token, e)
 
-    if self.at('@') or self.at('def'):
+    if self.at('@') or self.at('async') or self.at('def'):
       decorators = []
       while self.consume('@'):
         decorators.append(self.parse_expression())
         self.expect('NEWLINE')
 
+      is_async = bool(self.consume('async'))
       self.expect('def')
-      atype = Generator if self.consume('*') else Function
+      is_generator = bool(self.consume('*'))
       name = self.expect('NAME').value
       self.expect('(')
       args = self.parse_argument_list()
       self.expect(')')
       block = self.parse_block()
-      return atype(token, decorators, name, args, block)
+      return Function(
+          token, decorators, name, args, block, is_generator, is_async)
 
     # If we get this far, it means that we have an expression statement.
     e = self.parse_expression()
@@ -897,6 +900,11 @@ class Parser(object):
       uri = self.expect('STRING').value
       return Import(token, uri)
 
+    token = self.consume('yield')
+    if token:
+      e = self.parse_expression()
+      return Yield(token, e)
+
     raise ParseError(self.peek, 'expected expression')
 
 def parse(source):
@@ -1010,7 +1018,7 @@ class JavascriptCodeGenerator(object):
         raise ParseError(used[name], 'Undeclared name "%s"' % name)
 
   @classmethod
-  def visit_modules(self, modules, main_uri):
+  def visit_modules(cls, modules, main_uri):
     return """/* jshint esversion: 6 */
 (function() {
 "use strict";
@@ -1093,6 +1101,14 @@ catchAndDisplay(function() {
       assign += '\nlet sl%s = args.slice(%d);' % (node.vararg, i)
     return check + assign
 
+  def wrap_with_decorators(self, decorators, converted_expression):
+    result = converted_expression
+    for decorator in decorators:
+      d = decorator.accept(self)
+      result = 'callm(%s, "sl__call", [%s])' % (
+          decorator.accept(self), result)
+    return result
+
   def visit_function(self, node):
     if node.decorators:
       raise ParseError(node.token, 'Decorators not yet supported')
@@ -1102,10 +1118,12 @@ catchAndDisplay(function() {
     names = self.pop_scope()
 
     body = ''.join('\nlet sl%s = slnil;' % n for n in names) + body
+    f = 'new slxFunction("%s", function(args) {%s%s\n})' % (
+        node.name, arglist, body)
 
     self.declare_variable(node.name)
-    return '\nsl%s = new slxFunction("%s", function(args) {%s%s\n});' % (
-        node.name, node.name, arglist, body)
+    return '\nsl%s = %s;' % (
+        node.name, self.wrap_with_decorators(node.decorators, f))
 
   def visit_if(self, node):
     cond, body = node.pairs[0]

@@ -15,3 +15,7 @@ if i < 10
   print('i < 10')
 else
   print('not (i < 10)')
+
+def g()
+  return 5
+
