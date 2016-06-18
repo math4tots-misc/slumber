@@ -131,7 +131,13 @@ SYMBOLS = tuple(reversed(sorted([
   '&=', '|=', '^=', '>>=', '<<=', '**=',
   # -- ellipsis -- special token.
   '...',
+  # my symbols
+  '\\',
 ])))
+
+PRELUDE_BUILTINS = {
+    'map', 'filter', 'range',
+}
 
 BUILTIN_NAMES = {
     'Object', 'Nil', 'Bool', 'Number', 'String', 'List', 'Table', 'Function',
@@ -140,7 +146,7 @@ BUILTIN_NAMES = {
     'iter', 'len', 'id', 'repr', 'str',
     'assert',
     'addMethodTo',
-}
+}|PRELUDE_BUILTINS
 
 def is_wordchar(c):
   return c == '_' or c.isalnum()
@@ -456,6 +462,15 @@ class Return(Statement):
   def accept(self, visitor):
     return visitor.visit_return(self)
 
+class Import(Statement):
+  def __init__(self, token, uri, name):
+    super(Import, self).__init__(token)
+    self.uri = uri
+    self.name = name
+
+  def accept(self, visitor):
+    return visitor.visit_import(self)
+
 class ExpressionStatement(Statement):
   def __init__(self, token, expression):
     self.expression = expression  # Expression
@@ -566,14 +581,6 @@ class Ternary(Expression):
 
   def accept(self, visitor):
     return visitor.visit_ternary(self)
-
-class Import(Expression):
-  def __init__(self, token, uri):
-    super(Import, self).__init__(token)
-    self.uri = uri
-
-  def accept(self, visitor):
-    return visitor.visit_import(self)
 
 class SetAttribute(Expression):
   def __init__(self, token, owner, name, expression):
@@ -688,6 +695,13 @@ class Parser(object):
     if self.consume('pass'):
       self.expect('NEWLINE')
       return Pass(token)
+
+    if self.consume('import'):
+      uri = self.expect('STRING').value
+      self.expect('as')
+      name = self.expect('NAME').value
+      self.expect('NEWLINE')
+      return Import(token, uri, name)
 
     if self.consume('sync'):
       self.expect('NEWLINE')
@@ -971,16 +985,15 @@ class Parser(object):
     return ExpressionList(token, exprs, vararg)
 
   def parse_primary_expression(self):
-    token = self.consume('NUMBER')
-    if token:
+    token = self.peek
+
+    if self.consume('NUMBER'):
       return NumberLiteral(token, token.value)
 
-    token = self.consume('STRING')
-    if token:
+    if self.consume('STRING'):
       return StringLiteral(token, token.value)
 
-    token = self.consume('NAME')
-    if token:
+    if self.consume('NAME'):
       name = token.value
       if self.consume('='):
         expression = self.parse_expression()
@@ -988,29 +1001,26 @@ class Parser(object):
       else:
         return Name(token, name)
 
-    token = self.consume('self')
-    if token:
+    if self.consume('self'):
       return Self(token)
 
-    token = self.consume('(')
-    if token:
+    if self.consume('('):
       expr = self.parse_expression()
       self.expect(')')
       return expr
 
-    token = self.consume('[')
-    if token:
+    if self.consume('['):
       exprlist = self.parse_expression_list()
       self.expect(']')
       return ListDisplay(token, exprlist)
 
-    token = self.consume('import')
-    if token:
-      uri = self.expect('STRING').value
-      return Import(token, uri)
+    if self.consume('\\'):
+      arglist = self.parse_argument_list()
+      self.expect('.')
+      expr = self.parse_expression()
+      return Lambda(token, arglist, expr)
 
-    token = self.consume('yield')
-    if token:
+    if self.consume('yield'):
       e = self.parse_expression()
       return Yield(token, e)
 
@@ -1114,7 +1124,8 @@ class JavascriptCodeGenerator(object):
     return self.declare_stack.pop()
 
   def declare_variable(self, name):
-    self.declare_stack[-1].add(name)
+    if name not in self.implicit_declare_stack[-1]:
+      self.declare_stack[-1].add(name)
 
   def declare_implicit_variable(self, name):
     if not any(name in scope for scope in self.used_stack):
@@ -1133,6 +1144,7 @@ class JavascriptCodeGenerator(object):
     return """/* jshint esversion: 6 */
 (function() {
 "use strict";
+%s
 %s
 let MODULE_LOADERS = {%s
 };
@@ -1159,11 +1171,16 @@ function catchAndDisplay(f) {
   }
 }
 catchAndDisplay(function() {
-  loadModuleRaw("core/prelude.sl");
+  ({%s} = loadModuleRaw("core/prelude.sl"));
   loadModuleRaw("%s");
 });
 })();
-""" % (JS_PRELUDE, ''.join(modules), main_uri)
+""" % (
+    JS_PRELUDE,
+    ''.join('\nlet sl%s = slnil;' % n for n in PRELUDE_BUILTINS),
+    ''.join(modules),
+    ', '.join('sl' + n for n in PRELUDE_BUILTINS),
+    main_uri)
 
   def visit_native_module(self, uri, data):
     if data.startswith('/* jshint esversion: 6 */'):
@@ -1302,7 +1319,7 @@ sl%s = slx%s.prototype.cls = new slxClass('%s', slx%s);
 
   def visit_if(self, node):
     cond, body = node.pairs[0]
-    main = '\nif (%s)%s' % (
+    main = '\nif ((%s).truthy())%s' % (
         self.wrap_expression_in_context(cond),
         body.accept(self))
     pairs = ['\nelse if (%s)%s' % (
@@ -1382,6 +1399,22 @@ sl%s = slx%s.prototype.cls = new slxClass('%s', slx%s);
   def visit_list_display(self, node):
     return 'new slxList(%s)'  % (
         self.visit_expression_list(node.expressions),)
+
+  def visit_lambda(self, node):
+    self.context_stack.append('<lambda>')
+    self.push_scope()
+    arglist = node.arguments.accept(self)
+    body = self.wrap_expression_in_context(node.expression)
+    names = self.pop_scope()
+    self.context_stack.pop()
+    if names:
+      raise ParseError(
+          node.token,
+          'variable assignments are not allowed inside lambda functions')
+    self.arglist = node.arguments.accept(self)
+    return (
+        'new slxFunction("<lambda>", '
+          '((args) => {%s return %s;}))') % (arglist, body)
 
   def visit_simple_assignment(self, node):
     self.declare_variable(node.name)

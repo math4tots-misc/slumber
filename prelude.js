@@ -136,11 +136,7 @@ class slxObject {
   }
   sl__eq(args) {
     checkargs(args, 1);
-    return this === args[0];
-  }
-  sl__ne(args) {
-    checkargs(args, 1);
-    return callm(this, 'sl__eq', args).truthy() ? slfalse : sltrue;
+    return this === args[0] ? sltrue : slfalse;
   }
   sl__bool(args) {
     checkargs(args, 0);
@@ -377,6 +373,10 @@ let sllen = new slxFunction('len', function(args) {
 let slrepr = new slxFunction('repr', function(args) {
   checkargs(args, 1);
   return callm(args[0], 'sl__repr', []);
+});
+let slstr = new slxFunction('str', function(args) {
+  checkargs(args, 1);
+  return callm(args[0], 'sl__str', []);
 });
 let slassert = new slxFunction('assert', function(args) {
   checkargsrange(args, 1, 2);

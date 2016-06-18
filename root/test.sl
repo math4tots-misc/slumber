@@ -18,7 +18,7 @@ c = 10
 assert(f(1, 5) == 36, f(1, 5))
 
 result = false
-i = 10
+i = 5
 if i < 10
   result = true
 else
@@ -101,9 +101,8 @@ assert(not (10 < 5))
 
 i = 0
 while i < 10
-  print(i)
   i = i + 1
-print(i)
+assert(i == 10, i)
 
 # For testing 'sync', just verify that the code in the block
 # runs.
@@ -111,6 +110,23 @@ x = false
 sync
   x = true
 assert(x)
+
+def addOne(x)
+  return x + 1
+
+xs = List(map(addOne, [1, 2, 3]))
+assert(xs == [2, 3, 4], xs)
+
+lf = \x . 2*x + 1
+
+assert(lf(1) == 3, lf(1))
+assert(lf(2) == 5, lf(2))
+
+xs = List(map(\x. 2*x + 1, [1, 2, 3]))
+assert(xs == [3, 5, 7], xs)
+
+xs = List(filter(\x. x > 5, map(\x. 2*x + 1, range(10))))
+assert(xs == [7, 9, 11, 13, 15, 17, 19], xs)
 
 print('tests pass!')
 
