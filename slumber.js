@@ -132,7 +132,8 @@ let KEYWORDS = [
   'assert', 'else', 'import', 'pass',
   'break', 'except', 'in', 'raise',
   // my keywords
-  'async', 'await', 'self',
+  'self', 'super',
+  'async', 'await', 'sync',
 ];
 
 let SYMBOLS = [
@@ -147,6 +148,8 @@ let SYMBOLS = [
   '&=', '|=', '^=', '>>=', '<<=', '**=',
   // -- ellipsis -- special token.
   '...',
+  // my symbols
+  '\\',
 ];
 
 let ESCAPE_TABLE = {
