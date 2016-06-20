@@ -436,8 +436,12 @@ class Ast {
   toString() {
     let s = '\n' + this.constructor.name;
     for (let key of Object.keys(this)) {
+      let value = this[key];
+      if (value === undefined) {
+        value = 'undefined';
+      }
       s += (
-        '\n' + key + ' = ' + this[key].toString()
+        '\n' + key + ' = ' + value.toString()
       ).replace(/[ ]*\n/g, '\n  ');
     }
     return s;
@@ -1297,7 +1301,8 @@ class Parser {
         methods.push(this.parseStatement());
         if (methods[methods.length-1] instanceof Pass) {
           methods.pop();
-        } else if (!(methods[methods.length-1] instanceof Function)) {
+        } else if (
+            !(methods[methods.length-1] instanceof FunctionStatement)) {
           throw new SlumberError(
               'Expected method', methods[methods.length-1].token);
         }
@@ -1557,6 +1562,14 @@ addMethod(slClass, '__call', (self, args) => {
   x.callm('__init', args);
   return x;
 });
+addMethod(slClass, '__repr', (self, args) => {
+  checkargs(args, 0);
+  return makeString('<Class ' + self.dat.nam + '>');
+});
+addMethod(slClass, 'getMro', (self, args) => {
+  checkargs(args, 0);
+  return makeList(Array.from(self.dat.mro));
+});
 
 function makeClass(name, bases, instantiable) {
   let cls = new SlumberObject(slClass, null, {});
@@ -1594,7 +1607,11 @@ function makeClass(name, bases, instantiable) {
 
 let slObject = makeClass('Object', []);
 scopeSet(slumberGlobals, 'Object', slObject);
+addMethod(slObject, '__init', (self, args) => {
+  checkargs(args, 0);
+});
 addMethod(slObject, '__repr', (self, args) => {
+  checkargs(args, 0);
   return makeString('<' + self.cls.dat.nam + ' id=' + self.oid + '>');
 });
 addMethod(slObject, '__str', (self, args) => {
@@ -1789,21 +1806,24 @@ function makeIterator(iter) {
 }
 scopeSet(slumberGlobals, 'Iterator', slIterator);
 addMethod(slIterator, '__iter', (self, args) => {
+  checkargs(args, 0);
   return self;
 });
 addMethod(slIterator, '__more', (self, args) => {
+  checkargs(args, 0);
   if (!self.dat.peek) {
-    self.dat.peek = self.dat.iter.next();
+    self.dat.peek = self.dat.iter.next(slnil);
   }
   return !self.dat.peek.done ? sltrue : slfalse;
 });
 addMethod(slIterator, '__next', (self, args) => {
+  checkargsrange(args, 0, 1);
   if (!self.dat.peek) {
-    self.dat.peek = self.dat.iter.next();
+    self.dat.peek = self.dat.iter.next(slnil);
   }
   let value = self.dat.peek.value;
   if (!self.dat.peek.done) {
-    self.dat.peek = self.dat.iter.next();
+    self.dat.peek = self.dat.iter.next(args.length === 1 ? args[0] : slnil);
   }
   return value;
 });
@@ -1832,10 +1852,18 @@ scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
   }
 });
 
-scopeSetFunction(slumberGlobals, 'len', (self, args) => {
+scopeSetFunction(slumberGlobals, 'addMethodTo', (self, args) => {
   checkargs(args, 1);
-  return args[0].callm('__len', []);
+  checktype(args[0], slClass);
+  let cls = args[0];
+  return makeFunction('addMethodToWrapper', (self, args) => {
+    checkargs(args, 1);
+    checktype(args[0], slFunction);
+    let f = args[0];
+    return addMethod(cls, f.dat.f);
+  });
 });
+
 
 ////// evaluator
 
@@ -1961,7 +1989,7 @@ class Evaluator {
       throw new SlumberError(
           "You can't yield from a non-generator", node.token);
     }
-    yield yield* node.expr.accep(this);
+    return yield yield* node.expr.accep(this);
   }
 
   *visitYieldStar(node) {
@@ -1969,7 +1997,7 @@ class Evaluator {
       throw new SlumberError(
           "You can't yield from a non-generator", node.token);
     }
-    yield* yield* node.expr.accep(this);
+    return yield* yield* node.expr.accep(this);
   }
 
   *visitMethodCall(node) {
@@ -2013,10 +2041,60 @@ class Evaluator {
       });
     }
     for (let i = node.decorators.length-1; i >= 0; i--) {
-      f = yield* node.decorators[i].callm('__call', [f]);
+      // TODO: BUGFIX decorators.
+      console.log(f);
+      let dn = node.decorators[i];
+      console.log(dn);
+      let decorator = yield* dn;
+      f = decorator.callm('__call', [f]);
+      console.log(f);
     }
     scopeSet(this.scp, name, f);
     return f;
+  }
+
+  *visitClassStatement(node) {
+    let name = node.nam;
+    let bases = [];
+    for (let b of node.bases) {
+      bases.push(yield* b);
+    }
+    if (bases.length === 0) {
+      bases.push(slObject);
+    }
+    let cls = makeClass(name, bases, true);
+    let methods = node.methods;
+    let scope = this.scp;
+    let astToMethod = m => {
+      if (m.decorators.length > 0) {
+        throw new SlumberError(
+            'Decorators on methods not yet supported', m.token);
+      }
+      if (m.isAsync) {
+        throw new SlumberError('Async methods not yet supported', m.token);
+      }
+      if (m.isGen) {
+        return (self, args) => {
+          let s = newScope(scope);
+          scopeSet(s, 'self', self);
+          assignArgumentList(s, m.arglist, args);
+          return makeIterator((function*() {
+            return yield* m.bod.accep(new Evaluator(s, true));
+          })());
+        };
+      }
+      return (self, args) => {
+        let s = newScope(scope);
+        scopeSet(s, 'self', self);
+        assignArgumentList(s, m.arglist, args);
+        return new Evaluator(s).runToCompletion(body);
+      };
+    };
+    for (let m of methods) {
+      addMethod(cls, m.nam, astToMethod(m));
+    }
+    scopeSet(scope, name, cls);
+    return cls;
   }
 
   *visitFor(node) {
@@ -2035,6 +2113,12 @@ class Evaluator {
     }
     return slnil;
   }
+
+  *visitReturn(node) {
+    let value = yield* node.expr.accep(this);
+    this.returnFlag = true;
+    return value;
+  }
 }
 
 function run(source, scope) {
@@ -2048,6 +2132,15 @@ function run(source, scope) {
 ////// prelude
 
 let PRELUDE = `
+
+def len(xs)
+  return xs.__len()
+
+def str(x)
+  return x.__str()
+
+def repr(x)
+  return x.__repr()
 
 def* map(f, xs)
   for x in xs
@@ -2233,6 +2326,30 @@ def* g()
 assert((v = List(g())) == [0, 'a', 'b', 'c'], v)
 xs = List(map(\\x. x+1, [1, 2, 3]))
 assert(xs == [2, 3, 4], xs)
+
+class C
+  def* g()
+    yield 14
+    yield 18
+    return 'hoi'
+
+assert(C.getMro() == [C, Object], C.getMro())
+assert(List.getMro() == [List, Object], List.getMro())
+
+assert(str(C) == '<Class C>', str(C))
+c = C()
+print(List(c.g()))
+
+def* f()
+  print(yield* c.g())
+
+List(f())
+
+@addMethodTo(C)
+def f()
+  print('inside monkey-patched f')
+
+c.f()
 
 # print("simple run test2 pass")
 `;
