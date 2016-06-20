@@ -26,6 +26,8 @@ So for instance when I would normally have used 'type', I use 'typ'.
 */
 // Error.stackTraceLimit = Infinity;
 
+(function() {
+"use strict";
 ////// source
 
 class Source {
@@ -2357,4 +2359,5 @@ c.f()
   let m = runTest(() => run(src));
 }
 
+})();
 })();
