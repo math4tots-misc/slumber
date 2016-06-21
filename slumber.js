@@ -1,7 +1,31 @@
 /* jshint esversion: 6 */
+/*
+Language Notes:
 
-(function() {
-"use strict";
+* TENTATIVE: Naming convention is based on 'permanence' of a value.
+
+  - Final references to immutable values are ALL_CAPS.
+  - Final references to mutable values CapitalizedCamelCase.
+  - All other values are camelCase.
+
+Following this rule should 'nil', 'true', 'false' be ALLCAPS?
+
+Maybe
+  - constants that are data should be ALL_CAPS,
+  - declared classes should be CapitalizedCamelCase,
+  - and all other names should be camelCase.
+
+This means that e.g. if a function argument is a class, the name of the
+argument is camelCase and not CapitalizedCamelCase.
+
+Implementation Notes:
+
+* I try to avoid special attribute names (like 'type').
+So for instance when I would normally have used 'type', I use 'typ'.
+
+*/
+// Error.stackTraceLimit = Infinity;
+
 ////// source
 
 class Source {
@@ -1340,4 +1364,1007 @@ function checktype(arg, t) {
         'expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam);
   }
 }
+
+let objectCount = 0;
+
+class SlumberObject {
+  constructor(cls, attrs, dat) {
+
+    if (cls !== null) {
+      if (cls.cls !== slClass) {
+        throw new SlumberError('SlumberObject requires a Class object');
+      }
+    }
+
+    // cls should be another SlumberObject whose 'cls' instance is set to
+    // 'slClass'. Of course, the exception here is when we construct
+    // 'slClass' itself.
+    this.cls = cls;
+
+    // attrs contains attributes of this object. The values should always
+    // be SlumberObjects.
+    this.attrs = attrs !== undefined ? attrs : new Map();
+
+    // dat is for arbitrary javascript values to use as data (e.g. for
+    // builtin types).
+    this.dat = dat;
+
+    // Unique object identifier
+    this.oid = objectCount++;
+  }
+
+  hasattr(attributeName) {
+    return this.attrs && this.attrs.has(attributeName);
+  }
+
+  getattr(attributeName) {
+    let attr = this.attrs.get(attributeName);
+    if (!attr) {
+      throw new SlumberError(
+          'No such attribute ' + attributeName + ' for class ' +
+          this.cls.dat.nam);
+    }
+    return attr;
+  }
+
+  setattr(attributeName, value) {
+    if (!this.attrs) {
+      throw new SlumberError(
+          'Tried to set attribute on non-settable object (key = ' +
+          attributeName + ')');
+    }
+    this.attrs.set(attributeName, value);
+  }
+
+  callm(methodName, args) {
+    let mro = this.cls.dat.mro;
+    let mroIndex;
+    let m;
+    for (mroIndex = 0; mroIndex < mro.length; mroIndex++) {
+      if (mro[mroIndex].dat.meths.has(methodName)) {
+        m = mro[mroIndex].dat.meths.get(methodName);
+        break;
+      }
+    }
+    if (m === undefined) {
+      throw new SlumberError(
+          'No method "' + methodName + '" for class ' +
+          this.cls.dat.nam);
+    }
+    let r = m(this, args, mroIndex);
+    if (r === undefined) {
+      r = slnil;
+    }
+    if (!(r instanceof SlumberObject)) {
+      throw new SlumberError(
+          "Method call didn't return a SlumberObject: " + r +
+          "(" + this.cls.dat.nam + "." + methodName + ")");
+    }
+    return r;
+  }
+
+  isA(t) {
+    return this.cls.dat.mro.indexOf(t) !== -1;
+  }
+
+  toString() {
+    let x = this.callm('__str', []);
+    if (x.cls !== slString) {
+      throw new SlumberError('__str returned a non-string value: ' + x);
+    }
+    return x.dat;
+  }
+
+  inspect() {
+    return this.toString();
+  }
+
+  [Symbol.iterator]() {
+    return this.callm('__iter', []);
+  }
+
+  next() {
+    let done = !this.callm('__more', []).truthy();
+    let value = this.callm('__next', []);
+    return {done: done, value: value};
+  }
+
+  truthy() {
+    let b = this.callm('__bool', []);
+    checktype(b, slBool);
+    return b.dat;
+  }
+}
+
+class SlumberModule extends SlumberObject {
+  callm(methodName, args) {
+    if (this.hasattr(methodName)) {
+      return this.getattr(methodName).callm('__call', args);
+    }
+    return super.callm(methodName, args);
+  }
+}
+
+let slumberGlobals = Object.create(null);
+
+let SCOPE_PREFIX = 'xxx';
+
+function scopeSet(scope, name, value) {
+  scope[SCOPE_PREFIX + name] = value;
+}
+
+function scopeGet(scope, name, token) {
+  let v = scope[SCOPE_PREFIX + name];
+  if (!v) {
+    throw new SlumberError('Variable "' + name + '" never set', token);
+  }
+  return v;
+}
+
+function scopeKeys(scope) {
+  return Array.from(Object.keys(scope)).map(
+      key => key.slice(SCOPE_PREFIX.length));
+}
+
+function newScope(scope) {
+  return Object.create(scope);
+}
+
+function scopeSetFunction(scope, name, f) {
+  scopeSet(scope, name, makeFunction(name, f));
+}
+
+function addMethod(cls, name, f) {
+  if (!cls.dat.isLeaf) {
+    throw new SlumberError(
+        'You cannot add a method to a class that already has subclasses: ' +
+        '(' + cls.dat.nam + '.' + name + ')');
+  }
+  if (typeof name !== 'string') {
+    throw new SlumberError(
+        'Method name must be a javascript String but got ' + name);
+  }
+  if (typeof f !== 'function') {
+    throw new SlumberError(
+        'Tried to make method from ' + f + ' (' + name + ')');
+  }
+  if (f.length !== 2) {
+    throw new SlumberError(
+        'To make a slumber method, the javascript function must ' +
+        'accept exactly two arguments: "self" and "args"' +
+        '(' + name + ')');
+  }
+  cls.dat.meths.set(name, f);
+}
+
+let slClass = new SlumberObject(null, null, {});
+slClass.cls = slClass;
+slClass.dat.nam = 'Class';
+slClass.dat.meths = new Map();
+slClass.dat.bases = [];
+slClass.dat.mro = [slClass];
+slClass.dat.instantiable = false;
+slClass.dat.isLeaf = true;
+scopeSet(slumberGlobals, 'Class', slClass);
+addMethod(slClass, '__call', (self, args) => {
+  // 'maker' is like __new__ in Python.
+  if (self.dat.maker) {
+    return self.dat.maker(args);
+  }
+  // If the class has no 'dat.maker' attribute, we want to allocate first
+  // then call __init. Since many of the builtins aren't meant to be
+  // instantiated by the user, we only instantiate classes that are marked
+  // as instantiable this way.
+  if (!self.dat.instantiable) {
+    throw new SlumberError('Class ' + self.dat.nam + ' is not instantiable');
+  }
+  let x = new SlumberObject(self);
+  x.callm('__init', args);
+  return x;
+});
+addMethod(slClass, '__repr', (self, args) => {
+  checkargs(args, 0);
+  return makeString('<Class ' + self.dat.nam + '>');
+});
+addMethod(slClass, 'getMro', (self, args) => {
+  checkargs(args, 0);
+  return makeList(Array.from(self.dat.mro));
+});
+
+function makeClass(name, bases, instantiable) {
+  let cls = new SlumberObject(slClass, null, {});
+  if (bases === undefined) {
+    bases = [slObject];
+  }
+
+  // TODO: multiple inheritance with C3 linearization (as in Python).
+  if (bases.length > 1) {
+    throw new SlumberError('Multiple inheritance is not yet supported');
+  }
+
+  cls.dat.nam = name;
+  cls.dat.meths = new Map();
+  cls.dat.bases = [];
+  cls.dat.isLeaf = true;
+  cls.dat.instantiable = instantiable;
+  for (let base of bases) {
+    if (!(base instanceof SlumberObject) || base.cls !== slClass) {
+      throw new SlumberError(
+          'Base classes must be "Class" objects but found ' + base);
+    }
+    base.dat.isLeaf = false;
+    cls.dat.bases.push(base);
+  }
+
+  cls.dat.mro = [cls];
+  if (bases.length > 0) {
+    cls.dat.mro = cls.dat.mro.concat(bases[0].dat.mro);
+  }
+
+  return cls;
+}
+
+
+let slObject = makeClass('Object', []);
+scopeSet(slumberGlobals, 'Object', slObject);
+addMethod(slObject, '__init', (self, args) => {
+  checkargs(args, 0);
+});
+addMethod(slObject, '__repr', (self, args) => {
+  checkargs(args, 0);
+  return makeString('<' + self.cls.dat.nam + ' id=' + self.oid + '>');
+});
+addMethod(slObject, '__str', (self, args) => {
+  return self.callm('__repr', args);
+});
+addMethod(slObject, '__eq', (self, args) => {
+  checkargs(args, 1);
+  return self === args[0] ? sltrue : slfalse;
+});
+addMethod(slObject, '__ne', (self, args) => {
+  return self.callm('__eq', args).truthy() ? slfalse : sltrue;
+});
+
+
+slClass.dat.bases.push(slObject);
+slClass.dat.mro.push(slObject);
+
+
+let slNil = makeClass('Nil');
+let slnil = new SlumberObject(slNil, null);
+scopeSet(slumberGlobals, 'Nil', slNil);
+scopeSet(slumberGlobals, 'nil', slnil);
+addMethod(slNil, '__repr', (self, args) => {
+  checkargs(args, 0);
+  return makeString('nil');
+});
+
+
+let slBool = makeClass('Bool');
+let sltrue = new SlumberObject(slBool, null, true);
+let slfalse = new SlumberObject(slBool, null, false);
+scopeSet(slumberGlobals, 'Bool', slBool);
+scopeSet(slumberGlobals, 'true', sltrue);
+scopeSet(slumberGlobals, 'false', slfalse);
+addMethod(slBool, '__repr', (self, args) => {
+  return makeString(self.dat ? 'true' : 'false');
+});
+addMethod(slBool, '__bool', (self, args) => {
+  return self;
+});
+
+
+let slNumber = makeClass('Number');
+function makeNumber(dat) {
+  if (typeof dat !== 'number') {
+    throw new SlumberError('Tried to make number from ' + dat);
+  }
+  if (isNaN(dat)) {
+    throw new SlumberError('Tried to make a NaN');
+  }
+  return new SlumberObject(slNumber, null, dat);
+}
+scopeSet(slumberGlobals, 'Number', slNumber);
+addMethod(slNumber, '__add', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slNumber);
+  return makeNumber(self.dat + args[0].dat);
+});
+addMethod(slNumber, '__repr', (self, args) => {
+  checkargs(args, 0);
+  return makeString(self.dat.toString());
+});
+addMethod(slNumber, '__bool', (self, args) => {
+  checkargs(args, 0);
+  return self.dat !== 0 ? sltrue : slfalse;
+});
+addMethod(slNumber, '__eq', (self, args) => {
+  checkargs(args, 1);
+  return args[0].isA(slNumber) && self.dat === args[0].dat ? sltrue : slfalse;
+});
+
+
+let slString = makeClass('String');
+function makeString(dat) {
+  if (typeof dat !== 'string') {
+    throw new SlumberError('Tried to make string from ' + dat);
+  }
+  return new SlumberObject(slString, null, dat);
+}
+scopeSet(slumberGlobals, 'String', slString);
+addMethod(slString, '__add', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slString);
+  return makeString(self.dat + args[0].dat);
+});
+addMethod(slString, '__str', (self, args) => {
+  checkargs(args, 0);
+  return self;
+});
+addMethod(slString, '__repr', (self, args) => {
+  checkargs(args, 0);
+  return makeString(escapeString(self.dat));
+});
+addMethod(slString, '__eq', (self, args) => {
+  checkargs(args, 1);
+  return args[0].isA(slString) && self.dat === args[0].dat ? sltrue : slfalse;
+});
+
+
+let slList = makeClass('List');
+function makeList(dat) {
+  if (!Array.isArray(dat)) {
+    throw new SlumberError('Tried to make List from ' + dat);
+  }
+  return new SlumberObject(slList, null, dat);
+}
+slList.dat.maker = (args) => {
+  return makeList(Array.from(args[0]));
+};
+scopeSet(slumberGlobals, 'List', slList);
+addMethod(slList, '__len', (self, args) => {
+  checkargs(args, 0);
+  return makeNumber(self.dat.length);
+});
+addMethod(slList, '__repr', (self, args) => {
+  checkargs(args, 0);
+  let s = '[';
+  let comma = false;
+  for (let x of self.dat) {
+    if (comma) {
+      s += ', ';
+    }
+    s += x.callm('__repr', []).toString();
+    comma = true;
+  }
+  s += ']';
+  return makeString(s);
+});
+addMethod(slList, '__eq', (self, args) => {
+  checkargs(args, 1);
+  if (!args[0].isA(slList)) {
+    return slfalse;
+  }
+  let xs = self.dat;
+  let ys = args[0].dat;
+  if (xs.length !== ys.length) {
+    return slfalse;
+  }
+  let len = xs.length;
+  for (let i = 0; i < len; i++) {
+    if (!xs[i].callm('__eq', [ys[i]]).truthy()) {
+      return slfalse;
+    }
+  }
+  return sltrue;
+});
+addMethod(slList, '__iter', (self, args) => {
+  checkargs(args, 0);
+  return makeIterator(self.dat[Symbol.iterator]());
+});
+
+
+let slFunction = makeClass('Function');
+function makeFunction(name, f) {
+  if (typeof name !== 'string') {
+    throw new SlumberError(
+        'Function names must be a string but found ' + name);
+  }
+  if (typeof f !== 'function') {
+    throw new SlumberError(
+        'Tried to make function from ' + f + ' (' + name + ')');
+  }
+  if (f.length !== 2) {
+    throw new SlumberError(
+        'To make a slumber function, the javascript function must accept ' +
+        'exactly two arguments: "self" and "args"' + ' (' + name + ')');
+  }
+  return new SlumberObject(slFunction, null, {nam: name, f: f});
+}
+function makeGenerator(name, f) {
+  if (typeof f !== 'function') {
+    throw new SlumberError(
+        'Tried to make generator from ' + f + ' (' + name + ')');
+  }
+  if (f.length !== 2) {
+    throw new SlumberError(
+        'To make a slumber generator, the javascript generator must ' +
+        'accept exactly two arguments: "self" and "args"' +
+        ' (' + name + ')');
+  }
+  return makeFunction(name, (self, args) => makeIterator(f(self, args)));
+}
+scopeSet(slumberGlobals, 'Function', slFunction);
+addMethod(slFunction, '__call', (self, args) => {
+  return self.dat.f(slnil, args);
+});
+
+
+let slIterator = makeClass('Iterator');
+function makeIterator(iter) {
+  return new SlumberObject(slIterator, null, {iter: iter});
+}
+scopeSet(slumberGlobals, 'Iterator', slIterator);
+addMethod(slIterator, '__iter', (self, args) => {
+  checkargs(args, 0);
+  return self;
+});
+addMethod(slIterator, '__more', (self, args) => {
+  checkargs(args, 0);
+  if (!self.dat.peek) {
+    self.dat.peek = self.dat.iter.next(slnil);
+  }
+  return !self.dat.peek.done ? sltrue : slfalse;
+});
+addMethod(slIterator, '__next', (self, args) => {
+  checkargsrange(args, 0, 1);
+  if (!self.dat.peek) {
+    self.dat.peek = self.dat.iter.next(slnil);
+  }
+  let value = self.dat.peek.value;
+  if (!self.dat.peek.done) {
+    self.dat.peek = self.dat.iter.next(args.length === 1 ? args[0] : slnil);
+  }
+  return value;
+});
+
+let slModule = makeClass('Module');
+function makeModule(uri, scope) {
+  let map = new Map();
+  for (let key of scopeKeys(scope)) {
+    map.set(key, scopeGet(scope, key));
+  }
+  return new SlumberModule(slModule, map, {uri: uri});
+}
+scopeSet(slumberGlobals, 'Module', slModule);
+
+
+scopeSetFunction(slumberGlobals, 'print', (self, args) => {
+  checkargs(args, 1);
+  console.log(args[0].toString());
+});
+
+scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
+  checkargsrange(args, 1, 2);
+  if (!args[0].truthy()) {
+    let message = args.length === 2 ? args[1].toString() : 'assertion error';
+    throw new SlumberError(message);
+  }
+});
+
+scopeSetFunction(slumberGlobals, 'addMethodTo', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slClass);
+  let cls = args[0];
+  return makeFunction('addMethodToWrapper', (self, args) => {
+    checkargs(args, 1);
+    checktype(args[0], slFunction);
+    let f = args[0];
+    return addMethod(cls, f.dat.f);
+  });
+});
+
+
+////// evaluator
+
+function assignArgumentList(scope, arglist, args) {
+  if (arglist.vararg) {
+    checkargsmin(args, arglist.args.length);
+  } else if (arglist.optargs.length > 0) {
+    let min = arglist.args.length;
+    let max = min + arglist.optargs.length;
+    checkargsrange(args, min, max);
+  } else {
+    checkargs(args, arglist.args.length);
+  }
+  let bound1 = arglist.args.length;
+  let bound2 = Math.min(bound1 + arglist.optargs.length, args.length);
+  let i = 0;
+  for (; i < bound1; i++) {
+    scopeSet(scope, arglist.args[i], args[i]);
+  }
+  for (let j = 0; i < bound2; i++, j++) {
+    scopeSet(scope, arglist.optargs[j], args[i]);
+  }
+  if (arglist.vararg) {
+    scopeSet(scope, arglist.vararg, makeList(args.slice(i)));
+  }
+}
+
+class Evaluator {
+  constructor(scope, isGen) {
+    this.scp = scope;
+    this.breakFlag = false;
+    this.continueFlag = false;
+    this.returnFlag = false;
+    this.isGen = !!isGen;
+  }
+
+  anyControlFlowFlagIsSet() {
+    return this.breakFlag || this.continueFlag || this.returnFlag;
+  }
+
+  runToCompletion(node) {
+    let i = node.accep(this);
+    let n = i.next(slnil);
+    if (!n.done) {
+      throw new SlumberError('Tried to run a generator like a function');
+    }
+    return n.value;
+  }
+
+  *visitFileInput(node) {
+    return yield* node.bod.accep(this);
+  }
+
+  *visitExpressionList(node) {
+    let args = [];
+    for (let e of node.exprs) {
+      args.push(yield* e.accep(this));
+    }
+    if (node.varexpr) {
+      let vararg = yield* node.varexpr.accep(this);
+      for (let arg of vararg) {
+        args.push(arg);
+      }
+    }
+    return args;
+  }
+
+  *visitBlock(node) {
+    for (let stmt of node.stmts) {
+      let result = yield* stmt.accep(this);
+      if (this.anyControlFlowFlagIsSet()) {
+        return result;
+      }
+    }
+    return slnil;
+  }
+
+  *visitName(node) {
+    if (false) yield slnil;  // JShint complains if there are no yields.
+    return scopeGet(this.scp, node.nam, node.token);
+  }
+
+  *visitNumberLiteral(node) {
+    if (false) yield slnil;  // JShint complains if there are no yields.
+    return makeNumber(node.val);
+  }
+
+  *visitStringLiteral(node) {
+    if (false) yield slnil;  // JShint complains if there are no yields.
+    return makeString(node.val);
+  }
+
+  *visitListDisplay(node) {
+    return makeList(yield* node.exprlist.accep(this));
+  }
+
+  *visitLambda(node) {
+    if (false) yield slnil;  // JShint complains if there are no yields.
+    let scope = this.scp;
+    let arglist = node.arglist;
+    let expr = node.expr;
+    return makeFunction('<lambda>', (self, args) => {
+      assignArgumentList(scope, arglist, args);
+      return new Evaluator(scope).runToCompletion(expr);
+    });
+  }
+
+  *visitSimpleAssignment(node) {
+    let name = node.nam;
+    let value = yield* node.expr.accep(this);
+    scopeSet(this.scp, node.nam, value);
+    return value;
+  }
+
+  *visitGetAttribute(node) {
+    let owner = yield* node.owner.accep(this);
+    let name = node.nam;
+    return callWithTrace(node.token, () => owner.getattr(name));
+  }
+
+  *visitYield(node) {
+    if (!this.isGen) {
+      throw new SlumberError(
+          "You can't yield from a non-generator", node.token);
+    }
+    return yield yield* node.expr.accep(this);
+  }
+
+  *visitYieldStar(node) {
+    if (!this.isGen) {
+      throw new SlumberError(
+          "You can't yield from a non-generator", node.token);
+    }
+    return yield* yield* node.expr.accep(this);
+  }
+
+  *visitMethodCall(node) {
+    let owner = yield* node.owner.accep(this);
+    let name = node.nam;
+    let args = yield* node.exprlist.accep(this);
+    return callWithTrace(node.token, () => owner.callm(name, args));
+  }
+
+  *visitNot(node) {
+    return (yield* node.expr.accep(this)).truthy() ? slfalse : sltrue;
+  }
+
+  *visitExpressionStatement(node) {
+    yield* node.expr.accep(this);
+    return slnil;
+  }
+
+  *visitFunctionStatement(node) {
+    let name = node.nam;
+    let body = node.bod;
+    let arglist = node.arglist;
+    let scope = this.scp;
+    let f;
+    if (node.isAsync) {
+      throw new SlumberError(
+          'Async functions are not yet supported', token);
+    } else if (node.isGen) {
+      f = makeGenerator(name, function*(self, args) {
+        let s = newScope(scope);
+        scopeSet(s, 'self', self);
+        assignArgumentList(scope, arglist, args);
+        return yield* body.accep(new Evaluator(s, true));
+      });
+    } else {
+      f = makeFunction(name, (self, args) => {
+        let s = newScope(scope);
+        scopeSet(s, 'self', self);
+        assignArgumentList(scope, arglist, args);
+        return new Evaluator(s).runToCompletion(body);
+      });
+    }
+    for (let i = node.decorators.length-1; i >= 0; i--) {
+      // TODO: BUGFIX decorators.
+      console.log(f);
+      let dn = node.decorators[i];
+      console.log(dn);
+      let decorator = yield* dn;
+      f = decorator.callm('__call', [f]);
+      console.log(f);
+    }
+    scopeSet(this.scp, name, f);
+    return f;
+  }
+
+  *visitClassStatement(node) {
+    let name = node.nam;
+    let bases = [];
+    for (let b of node.bases) {
+      bases.push(yield* b);
+    }
+    if (bases.length === 0) {
+      bases.push(slObject);
+    }
+    let cls = makeClass(name, bases, true);
+    let methods = node.methods;
+    let scope = this.scp;
+    let astToMethod = m => {
+      if (m.decorators.length > 0) {
+        throw new SlumberError(
+            'Decorators on methods not yet supported', m.token);
+      }
+      if (m.isAsync) {
+        throw new SlumberError('Async methods not yet supported', m.token);
+      }
+      if (m.isGen) {
+        return (self, args) => {
+          let s = newScope(scope);
+          scopeSet(s, 'self', self);
+          assignArgumentList(s, m.arglist, args);
+          return makeIterator((function*() {
+            return yield* m.bod.accep(new Evaluator(s, true));
+          })());
+        };
+      }
+      return (self, args) => {
+        let s = newScope(scope);
+        scopeSet(s, 'self', self);
+        assignArgumentList(s, m.arglist, args);
+        return new Evaluator(s).runToCompletion(body);
+      };
+    };
+    for (let m of methods) {
+      addMethod(cls, m.nam, astToMethod(m));
+    }
+    scopeSet(scope, name, cls);
+    return cls;
+  }
+
+  *visitFor(node) {
+    for (let x of yield* node.expr.accep(this)) {
+      scopeSet(this.scp, node.nam, x);
+      let value = yield* node.bod.accep(this);
+      if (this.breakFlag) {
+        this.breakFlag = false;
+        break;
+      } else if (this.continueFlag) {
+        this.continueFlag = false;
+        continue;
+      } else if (this.returnFlag) {
+        return value;
+      }
+    }
+    return slnil;
+  }
+
+  *visitReturn(node) {
+    let value = yield* node.expr.accep(this);
+    this.returnFlag = true;
+    return value;
+  }
+}
+
+function run(source, scope) {
+  if (scope === undefined) {
+    scope = newScope(slumberGlobals);
+  }
+  new Evaluator(scope).runToCompletion(parse(source));
+  return makeModule(source.uri, scope);
+}
+
+////// prelude
+
+let PRELUDE = `
+
+def len(xs)
+  return xs.__len()
+
+def str(x)
+  return x.__str()
+
+def repr(x)
+  return x.__repr()
+
+def* map(f, xs)
+  for x in xs
+    yield f(x)
+
+def* range(start, /end)
+  if end == nil
+    end = start
+    start = 0
+
+  i = start
+  while i < end
+    yield i
+    i = i + 1
+
+`;
+
+run(new Source('<prelude>', PRELUDE), slumberGlobals);
+
+
+////// tests
+(function() {
+"use strict";
+
+function assert(condition, message) {
+  if (!condition) {
+    message = message ? message : 'assertion error';
+    throw new Error(message);
+  }
+}
+
+function runTest(f) {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof SlumberError) {
+      console.log(e.toStringWithoutJavascriptTrace());
+    } else {
+      console.log(e.toString());
+    }
+    throw e;
+  }
+}
+
+// simple source tests
+{
+  let src = new Source('<test>', 'abc');
+  let token = new Token(src, 1, 'typ', 'val');
+  let r = token.toString();
+  assert(r === 'Token(source, 1, typ, val)', r);
+  r = token.getLocationMessage();
+  assert(r === `
+File "<test>", line 1
+abc
+ *`, r);
+}
+
+// trivial lexer test
+{
+  let dat = `
+`;
+  let src = new Source('<test>', dat);
+  let tokens = lex(src);
+  assert(tokens.length === 1, tokens.length);
+  assert(tokens[0].typ === 'EOF', tokens[0].typ);
+}
+
+// simple lexer test
+{
+  let dat = `
+while True:
+  'hello\\n world' 5 4.4 x.y # hoi
+# fun`;
+  let src = new Source('<lexer test>', dat);
+  let tokens = lex(src);
+  assert(tokens.length === 14, tokens.length);
+
+  assert(tokens[0].typ === 'while', tokens[0].typ);
+
+  assert(tokens[1].typ === 'True', tokens[1].typ);
+
+  assert(tokens[2].typ === ':', tokens[2].typ);
+
+  assert(tokens[3].typ === 'NEWLINE', tokens[3].typ);
+
+  assert(tokens[4].typ === 'INDENT', tokens[4].typ);
+
+  assert(tokens[5].typ === 'STRING', tokens[5].typ);
+  assert(tokens[5].val === 'hello\n world', tokens[5].val);
+
+  assert(tokens[6].typ === 'NUMBER', tokens[6].typ);
+  assert(tokens[6].val === 5, tokens[6].val);
+
+  assert(tokens[7].typ === 'NUMBER', tokens[7].typ);
+  assert(tokens[7].val === 4.4, tokens[7].val);
+
+  assert(tokens[8].typ === 'NAME', tokens[8].typ);
+  assert(tokens[8].val === 'x', tokens[8].val);
+
+  assert(tokens[9].typ === '.', tokens[9].typ);
+
+  assert(tokens[10].typ === 'NAME', tokens[10].typ);
+  assert(tokens[10].val === 'y', tokens[10].val);
+
+  assert(tokens[11].typ === 'NEWLINE', tokens[11].typ);
+
+  assert(tokens[12].typ === 'DEDENT', tokens[12].typ);
+
+  assert(tokens[13].typ === 'EOF', tokens[13].typ);
+}
+
+// simple parser test
+{
+  let dat = `
+hello
+5
+if a
+  b
+elif c
+  d
+else
+  e
+`;
+  let src = new Source('<parser test>', dat);
+  let r = runTest(() => parse(src));
+  // for now just be ok that it doesn't throw, and inspect
+  // results by hand as necessary with toString.
+}
+
+// simple run test
+{
+  let dat = `
+x = 5
+y = x + 7
+`;
+  let src = new Source('<run test>', dat);
+  let m = runTest(() => run(src));
+  let x = m.getattr('x');
+  assert(x.isA(slNumber), x.cls);
+  assert(x.dat === 5, x.dat);
+  let y = m.getattr('y');
+  assert(y.isA(slNumber), y.cls);
+  assert(y.dat === 12, y.dat);
+}
+
+// simple run test2
+{
+  let dat = `
+
+assert(true)
+assert(not false)
+assert('hi' == 'hi')
+assert('a' == 'a')
+assert(not ('a' != 'a'))
+assert('a' != 'b')
+
+def* f()
+  yield 173
+  yield 81
+  yield 4
+
+i = f()
+assert(i.__more())
+assert((v = i.__next()) == 173, v)
+assert(i.__more())
+assert((v = i.__next()) == 81, v)
+assert(i.__more())
+assert((v = i.__next()) == 4, v)
+assert(not i.__more())
+assert((v = i.__next()) == nil, v)
+
+def* f()
+  yield 173
+  yield 81
+  yield 4
+  yield 4
+
+assert((v = List(f())) == [173, 81, 4, 4], v)
+assert((v = List(f())) != [173, 81, 4, 23], v)
+
+assert((v = [1, 2, 3].__len()) == 3, v)
+assert((v = len([5, 4, 3, 2, 1])) == 5, v)
+
+def* f()
+  yield 'a'
+  yield 'b'
+
+def* g()
+  yield 0
+  yield* f()
+  yield 'c'
+
+assert((v = List(g())) == [0, 'a', 'b', 'c'], v)
+xs = List(map(\\x. x+1, [1, 2, 3]))
+assert(xs == [2, 3, 4], xs)
+
+class C
+  def* g()
+    yield 14
+    yield 18
+    return 'hoi'
+
+assert(C.getMro() == [C, Object], C.getMro())
+assert(List.getMro() == [List, Object], List.getMro())
+
+assert(str(C) == '<Class C>', str(C))
+c = C()
+print(List(c.g()))
+
+def* f()
+  print(yield* c.g())
+
+List(f())
+
+@addMethodTo(C)
+def f()
+  print('inside monkey-patched f')
+
+c.f()
+
+# print("simple run test2 pass")
+`;
+  let src = new Source('<run test>', dat);
+  let m = runTest(() => run(src));
+}
+
 })();
