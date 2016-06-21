@@ -1337,6 +1337,23 @@ function callWithTrace(token, f) {
   }
 }
 
+function checkfunc(name, f) {
+  if (typeof name !== 'string') {
+    throw new SlumberError(
+        'Function names must be a string but found ' + name);
+  }
+  if (typeof f !== 'function') {
+    throw new SlumberError(
+        'Tried to make function from ' + f + ' (' + name + ')');
+  }
+  if (f.length !== 2 && f.length !== 3) {
+    throw new SlumberError(
+        'To make a slumber function, the javascript function must accept ' +
+        'two or three arguments: "self", "args" and optionally "mroIndex"' +
+        ' (' + name + ')');
+  }
+}
+
 function checkargs(args, len) {
   args.map(checkobj);
   if (args.length !== len) {
@@ -1367,11 +1384,16 @@ function checkobj(arg) {
   }
 }
 
-function checktype(arg, t) {
+function checktype(arg, t, message) {
   checkobj(arg);
   if (!arg.isA(t)) {
+    if (message === undefined) {
+      message = '';
+    } else {
+      message = ': ' + message;
+    }
     throw new SlumberError(
-        'Expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam);
+        'Expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam + message);
   }
 }
 
@@ -1525,25 +1547,13 @@ function scopeSetFunction(scope, name, f) {
 }
 
 function addMethod(cls, name, f) {
-  if (!cls.dat.isLeaf) {
-    throw new SlumberError(
-        'You cannot add a method to a class that already has subclasses: ' +
-        '(' + cls.dat.nam + '.' + name + ')');
-  }
-  if (typeof name !== 'string') {
-    throw new SlumberError(
-        'Method name must be a javascript String but got ' + name);
-  }
-  if (typeof f !== 'function') {
-    throw new SlumberError(
-        'Tried to make method from ' + f + ' (' + name + ')');
-  }
-  if (f.length !== 2) {
-    throw new SlumberError(
-        'To make a slumber method, the javascript function must ' +
-        'accept exactly two arguments: "self" and "args"' +
-        '(' + name + ')');
-  }
+  // TODO: Consider whether I should add this check back in.
+  // if (!cls.dat.isLeaf) {
+  //   throw new SlumberError(
+  //       'You cannot add a method to a class that already has subclasses: ' +
+  //       '(' + cls.dat.nam + '.' + name + ')');
+  // }
+  checkfunc(name, f);
   cls.dat.meths.set(name, f);
 }
 
@@ -1692,6 +1702,11 @@ addMethod(slNumber, '__eq', (self, args) => {
   checkargs(args, 1);
   return args[0].isA(slNumber) && self.dat === args[0].dat ? sltrue : slfalse;
 });
+addMethod(slNumber, '__lt', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slNumber);
+  return self.dat < args[0].dat ? sltrue : slfalse;
+});
 
 
 let slString = makeClass('String');
@@ -1718,6 +1733,65 @@ addMethod(slString, '__repr', (self, args) => {
 addMethod(slString, '__eq', (self, args) => {
   checkargs(args, 1);
   return args[0].isA(slString) && self.dat === args[0].dat ? sltrue : slfalse;
+});
+addMethod(slString, 'join', (self, args) => {
+  checkargs(args, 1);
+  let s = '';
+  let comma = false;
+  for (let x of args[0]) {
+    if (comma) {
+      s += ', ';
+    }
+    checktype(x, slString, 'String.join requires an iterable of String');
+    s += x.toString();
+    comma = true;
+  }
+  return makeString(s);
+});
+addMethod(slString, '__mod', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slList, 'String.__mod requires a List argument');
+  let xs = args[0].dat;
+  let t = self.dat;
+  let s = '';
+  let i = 0, j = 0;
+  while (i < t.length) {
+    if (t[i] === '%') {
+      i++;
+      if (t[i] === '%') {
+        s += '%';
+        i++;
+      } else {
+        if (j >= xs.length) {
+          throw new SlumberError('Not enough format arguments');
+        }
+        switch(t[i]) {
+        case 'r':
+          s += xs[j].callm('__repr', []).toString();
+          break;
+        case 'd':
+          checktype(xs[j], slNumber);
+          /* falls through */
+        case 's':
+          s += xs[j].toString();
+          break;
+        default:
+          throw new SlumberError('Invalid format character: ' + t[i]);
+        }
+        i++;
+        j++;
+      }
+    } else {
+      s += t[i];
+      i++;
+    }
+  }
+  if (j < xs.length) {
+    throw new SlumberError(
+        'Only ' + j + ' of the ' + xs.length + ' supplied arguments ' +
+        'were used');
+  }
+  return makeString(s);
 });
 
 
@@ -1773,40 +1847,18 @@ addMethod(slList, '__iter', (self, args) => {
   return makeIterator(self.dat[Symbol.iterator]());
 });
 
-
 let slFunction = makeClass('Function');
 function makeFunction(name, f) {
-  if (typeof name !== 'string') {
-    throw new SlumberError(
-        'Function names must be a string but found ' + name);
-  }
-  if (typeof f !== 'function') {
-    throw new SlumberError(
-        'Tried to make function from ' + f + ' (' + name + ')');
-  }
-  if (f.length !== 2) {
-    throw new SlumberError(
-        'To make a slumber function, the javascript function must accept ' +
-        'exactly two arguments: "self" and "args"' + ' (' + name + ')');
-  }
+  checkfunc(name, f);
   return new SlumberObject(slFunction, null, {nam: name, f: f});
 }
 function makeGenerator(name, f) {
-  if (typeof f !== 'function') {
-    throw new SlumberError(
-        'Tried to make generator from ' + f + ' (' + name + ')');
-  }
-  if (f.length !== 2) {
-    throw new SlumberError(
-        'To make a slumber generator, the javascript generator must ' +
-        'accept exactly two arguments: "self" and "args"' +
-        ' (' + name + ')');
-  }
+  checkfunc(name, f);
   return makeFunction(name, (self, args) => makeIterator(f(self, args)));
 }
 scopeSet(slumberGlobals, 'Function', slFunction);
-addMethod(slFunction, '__call', (self, args) => {
-  return self.dat.f(slnil, args);
+addMethod(slFunction, '__call', (self, args, mroIndex) => {
+  return self.dat.f(self, args, mroIndex);
 });
 
 
@@ -1893,8 +1945,12 @@ function assignArgumentList(scope, arglist, args) {
   for (; i < bound1; i++) {
     scopeSet(scope, arglist.args[i], args[i]);
   }
-  for (let j = 0; i < bound2; i++, j++) {
+  let j = 0;
+  for (; i < bound2; i++, j++) {
     scopeSet(scope, arglist.optargs[j], args[i]);
+  }
+  for (; j < arglist.optargs.length; j++) {
+    scopeSet(scope, arglist.optargs[j], slnil);
   }
   if (arglist.vararg) {
     scopeSet(scope, arglist.vararg, makeList(args.slice(i)));
@@ -1915,7 +1971,7 @@ class Evaluator {
   }
 
   runToCompletion(node) {
-    let i = node.accep(this);
+    let i = this.visit(node);
     let n = i.next(slnil);
     if (!n.done) {
       throw new SlumberError('Tried to run a generator like a function');
@@ -1928,16 +1984,16 @@ class Evaluator {
   }
 
   *visitFileInput(node) {
-    return yield* node.bod.accep(this);
+    return yield* this.visit(node.bod);
   }
 
   *visitExpressionList(node) {
     let args = [];
     for (let e of node.exprs) {
-      args.push(yield* e.accep(this));
+      args.push(yield* this.visit(e));
     }
     if (node.varexpr) {
-      let vararg = yield* node.varexpr.accep(this);
+      let vararg = yield* this.visit(node.varexpr);
       for (let arg of vararg) {
         args.push(arg);
       }
@@ -2109,9 +2165,9 @@ class Evaluator {
   }
 
   *visitFor(node) {
-    for (let x of yield* node.expr.accep(this)) {
+    for (let x of yield* this.visit(node.expr)) {
       scopeSet(this.scp, node.nam, x);
-      let value = yield* node.bod.accep(this);
+      let value = yield* this.visit(node.bod);
       if (this.breakFlag) {
         this.breakFlag = false;
         break;
@@ -2125,8 +2181,36 @@ class Evaluator {
     return slnil;
   }
 
+  *visitWhile(node) {
+    while ((yield* this.visit(node.cond)).truthy()) {
+      let value = yield* this.visit(node.bod);
+      if (this.breakFlag) {
+        this.breakFlag = false;
+        break;
+      } else if (this.continueFlag) {
+        this.continueFlag = false;
+        continue;
+      } else if (this.returnFlag) {
+        return value;
+      }
+    }
+    return slnil;
+  }
+
+  *visitIf(node) {
+    for (let [cond, body] of node.pairs) {
+      if ((yield* this.visit(cond)).truthy()) {
+        return yield* this.visit(body);
+      }
+    }
+    if (node.other !== undefined) {
+      return yield* this.visit(node.other);
+    }
+    return slnil;
+  }
+
   *visitReturn(node) {
-    let value = yield* node.expr.accep(this);
+    let value = yield* this.visit(node.expr);
     this.returnFlag = true;
     return value;
   }
@@ -2140,9 +2224,34 @@ function run(source, scope) {
   return makeModule(source.uri, scope);
 }
 
+function runAndCatch(f) {
+  try {
+    return f();
+  } catch (e) {
+    if (e instanceof SlumberError) {
+      console.log(e.toStringWithoutJavascriptTrace());
+    } else {
+      console.log(e.toString());
+    }
+    throw e;
+  }
+}
+
 ////// prelude
 
 let PRELUDE = `
+
+@addMethodTo(Object)
+def __gt(rhs)
+  return rhs < self
+
+@addMethodTo(Object)
+def __ge(rhs)
+  return not (self < rhs)
+
+@addMethodTo(Object)
+def __le(rhs)
+  return not (rhs < self)
 
 def len(xs)
   return xs.__len()
@@ -2169,7 +2278,7 @@ def* range(start, /end)
 
 `;
 
-run(new Source('<prelude>', PRELUDE), slumberGlobals);
+runAndCatch(() => run(new Source('<prelude>', PRELUDE), slumberGlobals));
 
 
 ////// tests
@@ -2184,16 +2293,7 @@ function assert(condition, message) {
 }
 
 function runTest(f) {
-  try {
-    return f();
-  } catch (e) {
-    if (e instanceof SlumberError) {
-      console.log(e.toStringWithoutJavascriptTrace());
-    } else {
-      console.log(e.toString());
-    }
-    throw e;
-  }
+  return runAndCatch(f);
 }
 
 // simple source tests
@@ -2371,6 +2471,12 @@ def f()
  return 'inside monkey-patched f'
 
 assert(c.f() == 'inside monkey-patched f', c.f())
+
+assert((v = List(range(3))) == [0, 1, 2], v)
+
+assert((v = ', '.join(['a', 'b', 'c'])) == 'a, b, c', v)
+
+assert((v = '%s%%%r' % ['a', 'a']) == 'a%"a"', v)
 
 # print("simple run test2 pass")
 `;
