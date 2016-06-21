@@ -1,4 +1,7 @@
+/* jshint esversion: 6 */
 
+(function() {
+"use strict";
 ////// source
 
 class Source {
@@ -1337,3 +1340,4 @@ function checktype(arg, t) {
         'expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam);
   }
 }
+})();
