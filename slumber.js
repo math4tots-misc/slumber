@@ -1338,30 +1338,40 @@ function callWithTrace(token, f) {
 }
 
 function checkargs(args, len) {
+  args.map(checkobj);
   if (args.length !== len) {
     throw new SlumberError(
-        'expected ' + len + ' args but got ' + args.length);
+        'Expected ' + len + ' args but got ' + args.length);
   }
 }
 
 function checkargsrange(args, a, b) {
+  args.map(checkobj);
   if (args.length < a || args.length > b) {
     throw new SlumberError(
-        'expected ' + a + ' to ' + b + ' args but got ' + args.length);
+        'Expected ' + a + ' to ' + b + ' args but got ' + args.length);
   }
 }
 
 function checkargsmin(args, min) {
+  args.map(checkobj);
   if (args.length < min) {
     throw new SlumberError(
-        'expected at least ' + min + ' args but got ' + args.length);
+        'Expected at least ' + min + ' args but got ' + args.length);
+  }
+}
+
+function checkobj(arg) {
+  if (!(arg instanceof SlumberObject)) {
+    throw new SlumberError('Expected SlumberObject but found ' + arg);
   }
 }
 
 function checktype(arg, t) {
+  checkobj(arg);
   if (!arg.isA(t)) {
     throw new SlumberError(
-        'expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam);
+        'Expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam);
   }
 }
 
@@ -1860,7 +1870,7 @@ scopeSetFunction(slumberGlobals, 'addMethodTo', (self, args) => {
     checkargs(args, 1);
     checktype(args[0], slFunction);
     let f = args[0];
-    return addMethod(cls, f.dat.f);
+    return addMethod(cls, f.dat.nam, f.dat.f);
   });
 });
 
@@ -1911,6 +1921,10 @@ class Evaluator {
       throw new SlumberError('Tried to run a generator like a function');
     }
     return n.value;
+  }
+
+  visit(node) {
+    return node.accep(this);
   }
 
   *visitFileInput(node) {
@@ -2040,14 +2054,11 @@ class Evaluator {
         return new Evaluator(s).runToCompletion(body);
       });
     }
+    let call = (d) => () => f = d.callm('__call', [f]);
     for (let i = node.decorators.length-1; i >= 0; i--) {
-      // TODO: BUGFIX decorators.
-      console.log(f);
-      let dn = node.decorators[i];
-      console.log(dn);
-      let decorator = yield* dn;
-      f = decorator.callm('__call', [f]);
-      console.log(f);
+      let n = node.decorators[i];
+      let d = yield* this.visit(n);
+      callWithTrace(n.token, call(d));
     }
     scopeSet(this.scp, name, f);
     return f;
@@ -2348,18 +2359,18 @@ assert(List.getMro() == [List, Object], List.getMro())
 
 assert(str(C) == '<Class C>', str(C))
 c = C()
-print(List(c.g()))
+assert(List(c.g()) == [14, 18])
 
 def* f()
-  print(yield* c.g())
+  return yield* c.g()
 
-List(f())
+assert(List(f()) == [14, 18])
 
 @addMethodTo(C)
 def f()
-  print('inside monkey-patched f')
+ return 'inside monkey-patched f'
 
-c.f()
+assert(c.f() == 'inside monkey-patched f', c.f())
 
 # print("simple run test2 pass")
 `;
