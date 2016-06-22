@@ -21,6 +21,11 @@ Implementation Notes:
   do differently next time. However, I am hoping that my next implementation
   of slumber will be a transpiler in slumber itself.
 
+* With the latest round of modifications, this file is starting to get
+  pretty messy... I'm going to freeze on most features for now, except
+  for bugfixes and 'import', since I need import to be able to plug in
+  other builtin javascript modules as well as lots of slumber code.
+
 */
 // Error.stackTraceLimit = Infinity;
 
