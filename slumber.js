@@ -455,9 +455,11 @@ class Ast {
 }
 
 class FileInput extends Ast {
-  constructor(token, statements) {
+  constructor(token, statements, imports, vars) {
     super(token);
     this.bod = new Block(token, statements);
+    this.imports = imports;  // [string]
+    this.vars = vars;  // [string]
   }
 
   accep(visitor) {
@@ -668,10 +670,11 @@ class Ternary extends Expression {
 }
 
 class Lambda extends Expression {
-  constructor(token, arglist, expr) {
+  constructor(token, arglist, expr, vars) {
     super(token);
     this.arglist = arglist;  // ArgumentList
     this.expr = expr;  // Expression
+    this.vars = vars;  // [string]
   }
 
   accep(visitor) {
@@ -715,7 +718,7 @@ class ExpressionStatement extends Statement {
 }
 
 class FunctionStatement extends Statement {
-  constructor(token, decorators, nam, arglist, bod, isGen, isAsync) {
+  constructor(token, decorators, nam, arglist, bod, isGen, isAsync, vars) {
     super(token);
     this.decorators = decorators;  // [Expression]
     this.nam = nam;  // string
@@ -727,6 +730,7 @@ class FunctionStatement extends Statement {
       throw new SlumberError(
           'Async functions cannot also be generators', token);
     }
+    this.vars = vars;  // [string]
   }
 
   accep(visitor) {
@@ -848,6 +852,24 @@ class Parser {
     this.tokens = lex(src);
     this.cursor = 0;
     this.peek = this.tokens[0];
+    this.imports = new Set();
+    this.scopeStack = [];
+  }
+
+  pushScopeStack() {
+    this.scopeStack.push(new Set());
+  }
+
+  popScopeStack() {
+    return this.scopeStack.pop();
+  }
+
+  declareVariable(s) {
+    this.scopeStack[this.scopeStack.length-1].add(s);
+  }
+
+  declareImport(uri) {
+    this.imports.add(s);
   }
 
   gettok() {
@@ -884,13 +906,14 @@ class Parser {
   parseFileInput() {
     let token = this.peek;
     let stmts = [];
-    this.imports = new Set();
+    this.pushScopeStack();
     this.skipNewlines();
     while (!this.at('EOF')) {
       stmts.push(this.parseStatement());
       this.skipNewlines();
     }
-    return new FileInput(token, stmts);
+    let vars = Array.from(this.popScopeStack());
+    return new FileInput(token, stmts, Array.from(this.imports), vars);
   }
 
   parseBlock() {
@@ -918,15 +941,20 @@ class Parser {
     let optargs = [];
     let vararg;
     while (this.at('NAME')) {
-      args.push(this.expect('NAME').val);
+      let name = this.expect('NAME').val;
+      this.declareVariable(name);
+      args.push(name);
       this.consume(',');
     }
     while (this.consume('/')) {
-      optargs.push(this.expect('NAME').val);
+      let name = this.expect('NAME').val;
+      this.declareVariable(name);
+      optargs.push(name);
       this.consume(',');
     }
     if (this.consume('*')) {
       vararg = this.expect('NAME').val;
+      this.declareVariable(vararg);
     }
     return new ArgumentList(token, args, optargs, vararg);
   }
@@ -1156,6 +1184,7 @@ class Parser {
     if (this.consume('NAME')) {
       let name = token.val;
       if (this.consume('=')) {
+        this.declareVariable(name);
         let expr = this.parseExpression();
         return new SimpleAssignment(token, name, expr);
       } else {
@@ -1189,10 +1218,12 @@ class Parser {
     }
 
     if (this.consume('\\')) {
+      this.pushScopeStack();
       let arglist = this.parseArgumentList();
       this.expect('.');
       let expr = this.parseExpression();
-      return new Lambda(token, arglist, expr);
+      let vars = Array.from(this.popScopeStack());
+      return new Lambda(token, arglist, expr, vars);
     }
 
     if (this.consume('yield')) {
@@ -1218,10 +1249,16 @@ class Parser {
     }
 
     if (this.consume('import')) {
+      if (this.scopeStack.length > 1) {
+        throw new SlumberError(
+            "import statements are only allowed in global scope", token);
+      }
       let uri = this.expect('STRING').val;
       this.expect('as');
       let name = this.expect('NAME').val;
       this.expect('NEWLINE');
+      this.declareImport(uri);
+      this.declareVariable(name);
       return new Import(token, uri, name);
     }
 
@@ -1259,6 +1296,7 @@ class Parser {
 
     if (this.consume('for')) {
       let name = this.expect('NAME').val;
+      this.declareVariable(name);
       this.expect('in');
       let cont = this.parseExpression();
       this.expect('NEWLINE');
@@ -1286,6 +1324,7 @@ class Parser {
         decorators.push(this.parseExpression());
         this.expect('NEWLINE');
       }
+      this.pushScopeStack();
       let isAsync = !!this.consume('async');
       this.expect('def');
       let isGen = !!this.consume('*');
@@ -1294,8 +1333,10 @@ class Parser {
       let arglist = this.parseArgumentList();
       this.expect(')');
       let block = this.parseBlock();
+      let vars = Array.from(this.popScopeStack());
+      this.declareVariable(name);
       return new FunctionStatement(
-          token, decorators, name, arglist, block, isGen, isAsync);
+          token, decorators, name, arglist, block, isGen, isAsync, vars);
     }
 
     if (this.consume('class')) {
@@ -1306,6 +1347,7 @@ class Parser {
           bases.push(this.parseExpression());
         }
       }
+      this.pushScopeStack();
       this.expect('NEWLINE');
       this.expect('INDENT');
       let methods = [];
@@ -1319,6 +1361,8 @@ class Parser {
               'Expected method', methods[methods.length-1].token);
         }
       }
+      this.popScopeStack();
+      this.declareVariable(name);
       return new ClassStatement(token, name, bases, methods);
     }
 
@@ -1583,8 +1627,11 @@ function scopeHas(scope, name) {
 
 function scopeGet(scope, name, token) {
   let v = scope[SCOPE_PREFIX + name];
-  if (!v) {
+  if (v === undefined) {
     throw new SlumberError('Variable "' + name + '" never set', token);
+  } else if (v === null) {
+    throw new SlumberError(
+        'Variable "' + name + '" used before assignment', token);
   }
   return v;
 }
@@ -2039,12 +2086,22 @@ class Evaluator {
   // The constructor is semi-private.
   // Use one of the make*Evaluator functions instead.
   // Never use 'new Evaluator' outside of a make*Evaluator function.
-  constructor(scope, opts) {
+  constructor(node, scope, args, opts) {
+    this.node = node;
     this.scp = scope;
+    this.args = args;
     this.breakFlag = false;
     this.continueFlag = false;
     this.returnFlag = false;
     this.opts = opts;
+
+    for (let name of node.vars) {
+      scopeSet(scope, name, null);
+    }
+
+    if (args !== undefined) {
+      assignArgumentList(scope, node.arglist, args);
+    }
   }
 
   anyControlFlowFlagIsSet() {
@@ -2117,8 +2174,7 @@ class Evaluator {
     let arglist = node.arglist;
     let expr = node.expr;
     return makeFunction('<lambda>', (self, args) => {
-      assignArgumentList(scope, arglist, args);
-      return makeFunctionEvaluator(scope).runToCompletion(expr);
+      return makeFunctionEvaluator(node, scope, args).runToCompletion(expr);
     });
   }
 
@@ -2209,15 +2265,13 @@ class Evaluator {
           'Async functions are not yet supported', token);
     } else if (node.isGen) {
       f = makeGenerator(name, function*(self, args) {
-        let s = newScope(scope);
-        assignArgumentList(scope, arglist, args);
-        return yield* makeGeneratorEvaluator(s).visit(body);
+        return yield* makeGeneratorEvaluator(
+            node, newScope(scope), args).visit(body);
       });
     } else {
       f = makeFunction(name, (self, args) => {
-        let s = newScope(scope);
-        assignArgumentList(scope, arglist, args);
-        return makeFunctionEvaluator(s).runToCompletion(body);
+        return makeFunctionEvaluator(
+            node, newScope(scope), args).runToCompletion(body);
       });
     }
     let call = (d) => () => f = d.callm('__call', [f]);
@@ -2253,15 +2307,14 @@ class Evaluator {
       if (m.isGen) {
         return (self, args, mroIndex) => {
           let s = newScope(scope);
-          assignArgumentList(s, m.arglist, args);
-          return makeIterator(
-              makeGeneratorMethodEvaluator(s, self, mroIndex).visit(m.bod));
+          return makeIterator(makeGeneratorMethodEvaluator(
+              m, s, args, self, mroIndex).visit(m.bod));
         };
       }
       return (self, args, mroIndex) => {
         let s = newScope(scope);
-        assignArgumentList(s, m.arglist, args);
-        return makeMethodEvaluator(s, self, mroIndex).runToCompletion(m.bod);
+        return makeMethodEvaluator(
+            m, s, args, self, mroIndex).runToCompletion(m.bod);
       };
     };
     for (let m of methods) {
@@ -2323,32 +2376,32 @@ class Evaluator {
   }
 }
 
-function makeFunctionEvaluator(scope) {
-  return new Evaluator(scope, {
+function makeFunctionEvaluator(node, scope, args) {
+  return new Evaluator(node, scope, args, {
       isModule: false,
       isGen: false,
       isMethod: false,
   });
 }
 
-function makeGeneratorEvaluator(scope) {
-  return new Evaluator(scope, {
+function makeGeneratorEvaluator(node, scope, args) {
+  return new Evaluator(node, scope, args, {
       isModule: false,
       isGen: true,
       isMethod: false,
   });
 }
 
-function makeModuleEvaluator(scope) {
-  return new Evaluator(scope, {
+function makeModuleEvaluator(node, scope) {
+  return new Evaluator(node, scope, undefined, {
       isModule: true,
       isGen: false,
       isMethod: false,
   });
 }
 
-function makeMethodEvaluator(scope, self, mroIndex) {
-  return new Evaluator(scope, {
+function makeMethodEvaluator(node, scope, args, self, mroIndex) {
+  return new Evaluator(node, scope, args, {
       isModule: false,
       isGen: false,
       isMethod: true,
@@ -2357,8 +2410,8 @@ function makeMethodEvaluator(scope, self, mroIndex) {
   });
 }
 
-function makeGeneratorMethodEvaluator(scope, self, mroIndex) {
-  return new Evaluator(scope, {
+function makeGeneratorMethodEvaluator(node, scope, args, self, mroIndex) {
+  return new Evaluator(node, scope, args, {
       isModule: false,
       isGen: true,
       isMethod: true,
@@ -2371,7 +2424,8 @@ function run(source, scope) {
   if (scope === undefined) {
     scope = newScope(slumberGlobals);
   }
-  makeModuleEvaluator(scope).runToCompletion(parse(source));
+  let node = parse(source);
+  makeModuleEvaluator(node, scope).runToCompletion(node);
   return makeModule(source.uri, scope);
 }
 
@@ -2663,6 +2717,25 @@ assertRaise(\\. s.z = 5)
 # You should be able to change properties that we've already set though.
 s.x = 11
 assertEqual(s.x, 11)
+
+
+# "k" used before assignment
+
+k = 5
+def foo()
+  if false
+    k = 7
+  return k
+
+assertRaise(foo)
+
+def bar()
+  if true
+    k = 7
+  return k
+
+assertEqual(bar(), 7)
+
 
 # print("simple run test2 pass")
 `;
