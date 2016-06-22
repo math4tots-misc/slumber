@@ -2056,6 +2056,47 @@ scopeSetFunction(slumberGlobals, 'assertRaise', (self, args) => {
   }
 });
 
+////// import
+
+let importCaches = new Map();  // string -> SlumberModule objects.
+let importSources = new Map();  // string -> Source objects.
+
+function registerModule(m) {
+  checktype(m, slModule);
+  if (typeof m.dat.uri !== 'string') {
+    throw new SlumberError(
+        "Tried to register module, but 'dat' field was corrupt");
+  }
+  importCaches[m.dat.uri] = m;
+}
+
+function registerSource(src) {
+  if (!(src instanceof Source)) {
+    throw new SlumberError(
+        "registerSource argument must be a Source: " + src);
+  }
+  importSources[src.uri] = src;
+}
+
+function importModule(uri) {
+  if (!importCaches.has(uri)) {
+    if (!importSource.has(uri)) {
+      throw new SlumberError(
+          "Module with uri = " + uri + " is not available");
+    }
+    importCaches.set(uri, runModule(importSource.get(uri)));
+  }
+  return importCaches.get(uri);
+}
+
+function getModuleRequirements(uri) {
+  if (!importSource.has(uri)) {
+    if (importCaches.has(uri)) {
+      return [];  // If we don't have the source, it's native.
+    }
+  }
+  return Array.from(parse(importSource.get(uri)).imports);
+}
 
 ////// evaluator
 
@@ -2425,7 +2466,7 @@ function makeGeneratorMethodEvaluator(node, scope, args, self, mroIndex) {
   });
 }
 
-function run(source, scope) {
+function runModule(source, scope) {
   if (scope === undefined) {
     scope = newScope(slumberGlobals);
   }
@@ -2491,7 +2532,7 @@ def assertEqual(actual, expected)
 
 `;
 
-runAndCatch(() => run(new Source('<prelude>', PRELUDE), slumberGlobals));
+runAndCatch(() => runModule(new Source('<prelude>', PRELUDE), slumberGlobals));
 
 
 ////// tests
@@ -2600,7 +2641,7 @@ x = 5
 y = x + 7
 `;
   let src = new Source('<run test>', dat);
-  let m = runTest(() => run(src));
+  let m = runTest(() => runModule(src));
   let x = m.getattr('x');
   assert(x.isA(slNumber), x.cls);
   assert(x.dat === 5, x.dat);
@@ -2745,7 +2786,7 @@ assertEqual(bar(), 7)
 # print("simple run test2 pass")
 `;
   let src = new Source('<run test>', dat);
-  let m = runTest(() => run(src));
+  let m = runTest(() => runModule(src));
 }
 
 })();
@@ -2771,6 +2812,10 @@ exports.scopeSet = scopeSet;
 exports.scopeGet = scopeGet;
 exports.scopeSetFunction = scopeSetFunction;
 exports.addMethod = addMethod;
-exports.run = run;
+exports.runModule = runModule;
+exports.registerModule = registerModule;
+exports.registerSource = registerSource;
+exports.importModule = importModule;
+exports.getModuleRequirements = getModuleRequirements;
 
 })(slumber);
