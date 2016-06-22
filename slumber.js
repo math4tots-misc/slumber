@@ -26,6 +26,9 @@ So for instance when I would normally have used 'type', I use 'typ'.
 */
 // Error.stackTraceLimit = Infinity;
 
+(function() {
+"use strict";
+
 ////// source
 
 class Source {
@@ -2283,7 +2286,6 @@ runAndCatch(() => run(new Source('<prelude>', PRELUDE), slumberGlobals));
 
 ////// tests
 (function() {
-"use strict";
 
 function assert(condition, message) {
   if (!condition) {
@@ -2483,5 +2485,7 @@ assert((v = '%s%%%r' % ['a', 'a']) == 'a%"a"', v)
   let src = new Source('<run test>', dat);
   let m = runTest(() => run(src));
 }
+
+})();
 
 })();
