@@ -26,6 +26,12 @@ Implementation Notes:
   for bugfixes and 'import', since I need import to be able to plug in
   other builtin javascript modules as well as lots of slumber code.
 
+* IMPLEMENTATION DIRT: "self" is set in an inconsistent way across multiple
+  places. This is due to the evolution of the code -- when I added checks
+  to make sure that you can only call 'self' from methods, I had overlooked
+  that it would break _addMethodTo. Since _addMethodTo is really convenient,
+  I decided to just add 'self' to the scope.
+
 */
 // Error.stackTraceLimit = Infinity;
 
@@ -2145,6 +2151,10 @@ class Evaluator {
       scopeSet(scope, name, null);
     }
 
+    if (this.opts.slf) {
+      scopeSet(scope, "self", this.opts.slf);
+    }
+
     if (args !== undefined) {
       assignArgumentList(scope, node.arglist, args);
     }
@@ -2247,11 +2257,7 @@ class Evaluator {
 
   *visitSelf(node) {
     if (false) yield slnil;  // JShint complains if there are no yields.
-    if (!this.opts.isMethod) {
-      throw new SlumberError(
-          "You can't use 'self' from a non-method", node.token);
-    }
-    return this.opts.slf;
+    return scopeGet(this.scp, "self");
   }
 
   *visitYield(node) {
@@ -2311,13 +2317,17 @@ class Evaluator {
           'Async functions are not yet supported', token);
     } else if (node.isGen) {
       f = makeGenerator(name, function*(self, args) {
+        let s = newScope(scope);
+        scopeSet(s, "self", self);
         return yield* makeGeneratorEvaluator(
-            node, newScope(scope), args).visit(body);
+            node, s, args).visit(body);
       });
     } else {
       f = makeFunction(name, (self, args) => {
+        let s = newScope(scope);
+        scopeSet(s, "self", self);
         return makeFunctionEvaluator(
-            node, newScope(scope), args).runToCompletion(body);
+            node, s, args).runToCompletion(body);
       });
     }
     let call = (d) => () => f = d.callm('__call', [f]);
@@ -2517,6 +2527,11 @@ def* map(f, xs)
   for x in xs
     yield f(x)
 
+def* filter(f, xs)
+  for x in xs
+    if f(x)
+      yield x
+
 def* range(start, /end)
   if end == nil
     end = start
@@ -2708,7 +2723,10 @@ def* g()
 
 assertEqual(List(g()), [0, 'a', 'b', 'c'])
 xs = List(map(\\x. x+1, [1, 2, 3]))
-assert(xs == [2, 3, 4], xs)
+assertEqual(xs, [2, 3, 4])
+
+xs = List(filter(\\x. x > 10, range(5, 15)))
+assertEqual(xs, [11, 12, 13, 14])
 
 class C
   def* g()
