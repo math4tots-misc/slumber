@@ -2,6 +2,26 @@
 /*
 Language Notes:
 
+* Run phases
+
+  - parse phase
+    Although we can use this phase to find dependencies using import
+    statements. In the future I may not do much during this phase and
+    instead use the next phase to figure out all dependencies.
+
+  - compile/configuration phase
+    This phase is not gauarnateed to run in the actual target environment.
+    This is all the stuff that runs at the module scope outside of
+    the main function of the module we are running.
+
+    This is where you should specify configuration variables.
+    You can also request more dependencies programmatically during this
+    phase.
+
+  - run phase
+    This is when the main function runs. This is where the main work
+    of your program
+
 * Naming convention
 
   - Class names should be CapitalizedCamelCase
@@ -831,7 +851,7 @@ class Continue extends Statement {
 class Return extends Statement {
   constructor(token, expr) {
     super(token);
-    this.expr = expr;
+    this.expr = expr;  // Expression
   }
 
   accep(visitor) {
@@ -842,8 +862,8 @@ class Return extends Statement {
 class Import extends Statement {
   constructor(token, uri, nam) {
     super(token);
-    this.uri = uri;
-    this.nam = nam;
+    this.uri = uri;  // string
+    this.nam = nam;  // string|undefined
   }
 
   accep(visitor) {
@@ -1265,8 +1285,11 @@ class Parser {
             "import statements are only allowed in global scope", token);
       }
       let uri = this.expect('STRING').val;
-      this.expect('as');
-      let name = this.expect('NAME').val;
+      let name;
+      if (this.consume('as')) {
+        this.expect('as');
+        name = this.expect('NAME').val;
+      }
       this.expect('NEWLINE');
       this.declareImport(uri);
       this.declareVariable(name);
