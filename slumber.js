@@ -1486,7 +1486,8 @@ function checktype(arg, t, message) {
       message = ': ' + message;
     }
     throw new SlumberError(
-        'Expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam + message);
+        'Expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam +
+        ' ' + message);
   }
 }
 
@@ -1633,7 +1634,7 @@ class SlumberObject {
 
   truthy() {
     let b = this.callm('__bool', []);
-    checktype(b, slBool);
+    checktype(b, slBool, 'for return value for __bool');
     return b.dat;
   }
 }
@@ -1914,7 +1915,7 @@ addMethod(slString, '__mod', (self, args) => {
           s += xs[j].callm('__repr', []).toString();
           break;
         case 'd':
-          checktype(xs[j], slNumber);
+          checktype(xs[j], slNumber, '%d requires a number');
           /* falls through */
         case 's':
           s += xs[j].toString();
@@ -2064,7 +2065,7 @@ scopeSetFunction(slumberGlobals, '_addMethodTo', (self, args) => {
   let cls = args[0];
   return makeFunction('addMethodToWrapper', (self, args) => {
     checkargs(args, 1);
-    checktype(args[0], slFunction);
+    checktype(args[0], slFunction, 'addMethodToWrapper');
     let f = args[0];
     return addMethod(cls, f.dat.nam, f.dat.f);
   });
@@ -2083,6 +2084,25 @@ scopeSetFunction(slumberGlobals, 'assertRaise', (self, args) => {
   if (!exceptionRaised) {
     throw new SlumberError("Expected an error");
   }
+});
+
+
+scopeSetFunction(slumberGlobals, 'assertType', (self, args) => {
+  checkargsrange(args, 2, 3);
+  checktype(args[1], slClass, 'assertType needs Class as its second arg');
+  let message;
+  if (args.length === 3) {
+    message = args[2].toString();
+  }
+  checktype(args[0], args[1], message);
+  return args[0];
+});
+
+
+scopeSetFunction(slumberGlobals, 'isinstance', (self, args) => {
+  checkargs(args, 2);
+  checktype(args[1], slClass, 'isinstance needs Class as its second arg');
+  return args[0].isA(args[1]) ? sltrue : slfalse;
 });
 
 ////// import
@@ -2708,6 +2728,15 @@ assertEqual('a', 'a')
 assert(not ('a' != 'a'))
 assert('a' != 'b')
 
+assertType(5, Number)
+assertRaise(\\. assertType(5, String))
+assertType('5', String)
+assertRaise(\\. assertType('5', Number))
+assertType([1, 'hi'], List)
+assert(isinstance(5, Number))
+assert(isinstance('5', String))
+assert(isinstance([], List))
+
 def* f()
   yield 173
   yield 81
@@ -2789,6 +2818,8 @@ class Sample
 s = Sample(5)
 assertEqual(s.x, 5)
 
+assertType(s, Sample)
+
 class SampleTwo(Sample)
   def __init(x, y)
     self.y = y
@@ -2823,6 +2854,28 @@ def bar()
 
 assertEqual(bar(), 7)
 
+# Test optional arguments
+
+def f(a, /b)
+  if b == nil
+    return a + 1
+  else
+    return a + b
+
+assertEqual(f(5), 6)
+assertEqual(f(5, 6), 11)
+
+# Test varargs
+
+def addAll(*args)
+  total = 0
+  for arg in args
+    total = total + arg
+  return total
+
+assertEqual(addAll(), 0)
+assertEqual(addAll(1, 2, 3), 6)
+assertEqual(addAll(1, 2, 3, 4), 10)
 
 # print("simple run test2 pass")
 `;
