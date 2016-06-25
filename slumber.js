@@ -510,11 +510,16 @@ class Block extends Ast {
 }
 
 class ArgumentList extends Ast {
-  constructor(token, args, optargs, vararg) {
+  constructor(token, args, optargs, vararg, texprs) {
     super(token);
     this.args = args;  // [string]
     this.optargs = optargs;  // [string]
     this.vararg = vararg;  // string|undefined
+    this.texprs = texprs;  // [Expression]
+    if (args.length + optargs.length != texprs.length) {
+      throw new SlumberError(
+          'Invalid type expressions for Argumentlist', token);
+    }
   }
 
   accep(visitor) {
@@ -971,23 +976,34 @@ class Parser {
     let args = [];
     let optargs = [];
     let vararg;
+    let texprs = [];
     while (this.at('NAME')) {
       let name = this.expect('NAME').val;
       this.declareVariable(name);
       args.push(name);
+      if (this.consume(':')) {
+        texprs.push(this.parseExpression());
+      } else {
+        texprs.push(undefined);
+      }
       this.consume(',');
     }
     while (this.consume('/')) {
       let name = this.expect('NAME').val;
       this.declareVariable(name);
       optargs.push(name);
+      if (this.consume(':')) {
+        texprs.push(this.parseExpression());
+      } else {
+        texprs.push(undefined);
+      }
       this.consume(',');
     }
     if (this.consume('*')) {
       vararg = this.expect('NAME').val;
       this.declareVariable(vararg);
     }
-    return new ArgumentList(token, args, optargs, vararg);
+    return new ArgumentList(token, args, optargs, vararg, texprs);
   }
 
   atExpressionDelimiter() {
@@ -1487,7 +1503,7 @@ function checktype(arg, t, message) {
     }
     throw new SlumberError(
         'Expected ' + t.dat.nam + ' but found ' + arg.cls.dat.nam +
-        ' ' + message);
+        message);
   }
 }
 
@@ -2157,7 +2173,7 @@ function getModuleRequirements(uri) {
 
 ////// evaluator
 
-function assignArgumentList(scope, arglist, args) {
+function assignArgumentList(evaluator, scope, arglist, args) {
   if (arglist.vararg) {
     checkargsmin(args, arglist.args.length);
   } else if (arglist.optargs.length > 0) {
@@ -2167,14 +2183,27 @@ function assignArgumentList(scope, arglist, args) {
   } else {
     checkargs(args, arglist.args.length);
   }
+  let types = arglist.texprs;
   let bound1 = arglist.args.length;
   let bound2 = Math.min(bound1 + arglist.optargs.length, args.length);
   let i = 0;
   for (; i < bound1; i++) {
+    if (types[i] !== undefined && args[i] !== slnil) {
+      checktype(
+          args[i], evaluator.runToCompletion(types[i]),
+          "for " + arglist.args[i] + ' (argument ' + i + ')');
+    }
     scopeSet(scope, arglist.args[i], args[i]);
   }
   let j = 0;
   for (; i < bound2; i++, j++) {
+    if (types[i] !== undefined && args[i] !== slnil) {
+      if (types[i] !== undefined && args[i] !== slnil) {
+        checktype(
+            args[i], evaluator.runToCompletion(types[i]),
+            "for " + arglist.optargs[j] + ' (argument ' + i + ')');
+      }
+    }
     scopeSet(scope, arglist.optargs[j], args[i]);
   }
   for (; j < arglist.optargs.length; j++) {
@@ -2207,7 +2236,7 @@ class Evaluator {
     }
 
     if (args !== undefined) {
-      assignArgumentList(scope, node.arglist, args);
+      assignArgumentList(this, scope, node.arglist, args);
     }
   }
 
@@ -2889,6 +2918,22 @@ assertEqual(addAll(1, 2, 3, 4), 10)
 # NaN and Infinity are not present in slumber.
 assertRaise(\\. 0/0)
 assertRaise(\\. 1/0)
+
+
+# Type checking
+def f(a: Number)
+  return a + 5
+
+assertRaise(\\. f('hi'))
+assertEqual(f(7), 12)
+
+def f(s: String)
+  return 'hi ' + s
+
+assertRaise(\\. f(5))
+assertEqual(f('Bob'), 'hi Bob')
+
+f(5)
 
 # print("simple run test2 pass")
 `;
