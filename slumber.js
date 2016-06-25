@@ -1824,8 +1824,8 @@ function makeNumber(dat) {
   if (typeof dat !== 'number') {
     throw new SlumberError('Tried to make number from ' + dat);
   }
-  if (isNaN(dat)) {
-    throw new SlumberError('Tried to make a NaN');
+  if (!isFinite(dat)) {
+    throw new SlumberError('Tried to turn ' + dat + ' into a Number');
   }
   return new SlumberObject(slNumber, null, dat);
 }
@@ -1834,6 +1834,14 @@ addMethod(slNumber, '__add', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slNumber);
   return makeNumber(self.dat + args[0].dat);
+});
+addMethod(slNumber, '__div', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slNumber);
+  if (args[0].dat === 0) {
+    throw new SlumberError('Tried to divide by zero');
+  }
+  return makeNumber(self.dat / args[0].dat);
 });
 addMethod(slNumber, '__repr', (self, args) => {
   checkargs(args, 0);
@@ -2876,6 +2884,11 @@ def addAll(*args)
 assertEqual(addAll(), 0)
 assertEqual(addAll(1, 2, 3), 6)
 assertEqual(addAll(1, 2, 3, 4), 10)
+
+# Division by zero is not OK.
+# NaN and Infinity are not present in slumber.
+assertRaise(\\. 0/0)
+assertRaise(\\. 1/0)
 
 # print("simple run test2 pass")
 `;
