@@ -2933,8 +2933,6 @@ def f(s: String)
 assertRaise(\\. f(5))
 assertEqual(f('Bob'), 'hi Bob')
 
-f(5)
-
 # print("simple run test2 pass")
 `;
   let src = new Source('<run test>', dat);
