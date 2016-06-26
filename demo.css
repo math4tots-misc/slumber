@@ -1,0 +1,9 @@
+.CodeMirror {
+  border: 1px solid #eee;
+  height: auto;
+}
+
+.container-canvas {
+  margin-right: auto;
+  margin-left: auto;
+}

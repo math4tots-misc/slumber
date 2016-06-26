@@ -59,6 +59,8 @@ let slumber = {};
 (function(exports) {
 "use strict";
 
+let consoleLog = (x) => console.log(x);
+
 ////// source
 
 class Source {
@@ -905,7 +907,7 @@ class Parser {
   }
 
   declareImport(uri) {
-    this.imports.add(s);
+    this.imports.add(uri);
   }
 
   gettok() {
@@ -1303,7 +1305,6 @@ class Parser {
       let uri = this.expect('STRING').val;
       let name;
       if (this.consume('as')) {
-        this.expect('as');
         name = this.expect('NAME').val;
       }
       this.expect('NEWLINE');
@@ -1851,6 +1852,21 @@ addMethod(slNumber, '__add', (self, args) => {
   checktype(args[0], slNumber);
   return makeNumber(self.dat + args[0].dat);
 });
+addMethod(slNumber, '__sub', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slNumber);
+  return makeNumber(self.dat - args[0].dat);
+});
+addMethod(slNumber, '__mul', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slNumber);
+  return makeNumber(self.dat * args[0].dat);
+});
+addMethod(slNumber, '__mod', (self, args) => {
+  checkargs(args, 1);
+  checktype(args[0], slNumber);
+  return makeNumber(self.dat % args[0].dat);
+});
 addMethod(slNumber, '__div', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slNumber);
@@ -1979,6 +1995,10 @@ addMethod(slList, '__len', (self, args) => {
   checkargs(args, 0);
   return makeNumber(self.dat.length);
 });
+addMethod(slList, 'push', (self, args) => {
+  checkargs(args, 1);
+  self.dat.push(args[0]);
+});
 addMethod(slList, '__repr', (self, args) => {
   checkargs(args, 0);
   let s = '[';
@@ -2015,6 +2035,7 @@ addMethod(slList, '__iter', (self, args) => {
   checkargs(args, 0);
   return makeIterator(self.dat[Symbol.iterator]());
 });
+
 
 let slFunction = makeClass('Function');
 function makeFunction(name, f) {
@@ -2072,7 +2093,7 @@ scopeSet(slumberGlobals, 'Module', slModule);
 
 scopeSetFunction(slumberGlobals, 'print', (self, args) => {
   checkargs(args, 1);
-  console.log(args[0].toString());
+  consoleLog(args[0].toString());
 });
 
 scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
@@ -2153,22 +2174,22 @@ function registerSource(src) {
 
 function importModule(uri) {
   if (!importCaches.has(uri)) {
-    if (!importSource.has(uri)) {
+    if (!importSources.has(uri)) {
       throw new SlumberError(
           "Module with uri = " + uri + " is not available");
     }
-    importCaches.set(uri, runModule(importSource.get(uri)));
+    importCaches.set(uri, runModule(importSources.get(uri)));
   }
   return importCaches.get(uri);
 }
 
 function getModuleRequirements(uri) {
-  if (!importSource.has(uri)) {
+  if (!importSources.has(uri)) {
     if (importCaches.has(uri)) {
       return [];  // If we don't have the source, it's native.
     }
   }
-  return Array.from(parse(importSource.get(uri)).imports);
+  return Array.from(parse(importSources.get(uri)).imports);
 }
 
 ////// evaluator
@@ -2381,6 +2402,11 @@ class Evaluator {
     return (yield* this.visit(node.expr)).truthy() ? slfalse : sltrue;
   }
 
+  *visitImport(node) {
+    if (false) yield slnil;  // JShint complains if there are no yields.
+    return importModule(node.uri);
+  }
+
   *visitExpressionStatement(node) {
     yield* this.visit(node.expr);
     return slnil;
@@ -2570,9 +2596,9 @@ function runAndCatch(f) {
     return f();
   } catch (e) {
     if (e instanceof SlumberError) {
-      console.log(e.toStringWithoutJavascriptTrace());
+      consoleLog(e.toStringWithoutJavascriptTrace());
     } else {
-      console.log(e.toString());
+      consoleLog(e.toString());
     }
     throw e;
   }
@@ -2963,9 +2989,11 @@ exports.scopeGet = scopeGet;
 exports.scopeSetFunction = scopeSetFunction;
 exports.addMethod = addMethod;
 exports.runModule = runModule;
+exports.runAndCatch = runAndCatch;
 exports.registerModule = registerModule;
 exports.registerSource = registerSource;
 exports.importModule = importModule;
 exports.getModuleRequirements = getModuleRequirements;
+exports.setConsoleLog = (f) => { consoleLog = f; };
 
 })(slumber);
