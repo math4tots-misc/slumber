@@ -37,11 +37,11 @@
 # write your program here!
 print('hello world!')
 
-print('------ Demo: for loops and range iterator ------')
+print('\n\n------ Demo: for loops and range iterator ------')
 for i in range(10)
   print('i = %d' % [i])
 
-print('------ Demo: Functions ------')
+print('\n\n------ Demo: Functions ------')
 
 def f(a, b, /c)
   if c == nil
@@ -52,7 +52,7 @@ def f(a, b, /c)
 print(f(1, 2))
 print(f(1, 2, 3))
 
-print('------ Demo: Generator functions ------')
+print('\n\n------ Demo: Generator functions ------')
 def* countDownFrom(n)
   i = n
   while i > 0
@@ -65,6 +65,22 @@ for i in countDownFrom(5)
 
 print(numbers)
 
+print('\n\n------ Demo: stack trace on error ------')
+
+def firstFunction()
+  secondFunction()
+
+def secondFunction()
+  thing = Thing()
+  thing.someMethod()
+
+class Thing
+  def someMethod()
+    a = 0
+    b = 0
+    return a/b
+
+firstFunction()
 </textarea>
 <br />
 <p>
