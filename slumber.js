@@ -1669,7 +1669,7 @@ class SlumberModule extends SlumberObject {
   }
 }
 
-let slumberGlobals = Object.create(null);
+let globalScope = Object.create(null);
 
 let SCOPE_PREFIX = 'xxx';
 
@@ -1724,7 +1724,7 @@ slClass.dat.bases = [];
 slClass.dat.mro = [slClass];
 slClass.dat.instantiable = false;
 slClass.dat.isLeaf = true;
-scopeSet(slumberGlobals, 'Class', slClass);
+scopeSet(globalScope, 'Class', slClass);
 addMethod(slClass, '__call', (self, args) => {
   // 'maker' is like __new__ in Python.
   // At least for now though, I only want builtins to be able to
@@ -1831,7 +1831,7 @@ function makeClass(name, bases, instantiable) {
 
 
 let slObject = makeClass('Object', []);
-scopeSet(slumberGlobals, 'Object', slObject);
+scopeSet(globalScope, 'Object', slObject);
 addMethod(slObject, '__init', (self, args) => {
   checkargs(args, 0);
 });
@@ -1856,8 +1856,8 @@ slClass.dat.mro.push(slObject);
 
 let slNil = makeClass('Nil');
 let slnil = new SlumberObject(slNil, null);
-scopeSet(slumberGlobals, 'Nil', slNil);
-scopeSet(slumberGlobals, 'nil', slnil);
+scopeSet(globalScope, 'Nil', slNil);
+scopeSet(globalScope, 'nil', slnil);
 addMethod(slNil, '__repr', (self, args) => {
   checkargs(args, 0);
   return makeString('nil');
@@ -1867,9 +1867,9 @@ addMethod(slNil, '__repr', (self, args) => {
 let slBool = makeClass('Bool');
 let sltrue = new SlumberObject(slBool, null, true);
 let slfalse = new SlumberObject(slBool, null, false);
-scopeSet(slumberGlobals, 'Bool', slBool);
-scopeSet(slumberGlobals, 'true', sltrue);
-scopeSet(slumberGlobals, 'false', slfalse);
+scopeSet(globalScope, 'Bool', slBool);
+scopeSet(globalScope, 'true', sltrue);
+scopeSet(globalScope, 'false', slfalse);
 addMethod(slBool, '__repr', (self, args) => {
   return makeString(self.dat ? 'true' : 'false');
 });
@@ -1888,7 +1888,7 @@ function makeNumber(dat) {
   }
   return new SlumberObject(slNumber, null, dat);
 }
-scopeSet(slumberGlobals, 'Number', slNumber);
+scopeSet(globalScope, 'Number', slNumber);
 addMethod(slNumber, '__add', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slNumber);
@@ -1943,7 +1943,7 @@ function makeString(dat) {
   }
   return new SlumberObject(slString, null, dat);
 }
-scopeSet(slumberGlobals, 'String', slString);
+scopeSet(globalScope, 'String', slString);
 addMethod(slString, '__add', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slString);
@@ -2032,7 +2032,7 @@ function makeList(dat) {
 slList.dat.maker = (args) => {
   return makeList(Array.from(args[0]));
 };
-scopeSet(slumberGlobals, 'List', slList);
+scopeSet(globalScope, 'List', slList);
 addMethod(slList, '__len', (self, args) => {
   checkargs(args, 0);
   return makeNumber(self.dat.length);
@@ -2088,7 +2088,7 @@ function makeGenerator(name, f) {
   checkfunc(name, f);
   return makeFunction(name, (self, args) => makeIterator(f(self, args)));
 }
-scopeSet(slumberGlobals, 'Function', slFunction);
+scopeSet(globalScope, 'Function', slFunction);
 addMethod(slFunction, '__call', (self, args, mroIndex) => {
   return self.dat.f(self, args, mroIndex);
 });
@@ -2098,7 +2098,7 @@ let slIterator = makeClass('Iterator');
 function makeIterator(iter) {
   return new SlumberObject(slIterator, null, {iter: iter});
 }
-scopeSet(slumberGlobals, 'Iterator', slIterator);
+scopeSet(globalScope, 'Iterator', slIterator);
 addMethod(slIterator, '__iter', (self, args) => {
   checkargs(args, 0);
   return self;
@@ -2130,15 +2130,15 @@ function makeModule(uri, scope) {
   }
   return new SlumberModule(slModule, map, {uri: uri});
 }
-scopeSet(slumberGlobals, 'Module', slModule);
+scopeSet(globalScope, 'Module', slModule);
 
 
-scopeSetFunction(slumberGlobals, 'print', (self, args) => {
+scopeSetFunction(globalScope, 'print', (self, args) => {
   checkargs(args, 1);
   consoleLog(args[0].toString());
 });
 
-scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
+scopeSetFunction(globalScope, 'assert', (self, args) => {
   checkargsrange(args, 1, 2);
   if (!args[0].truthy()) {
     let message = args.length === 2 ? args[1].toString() : 'assertion error';
@@ -2146,7 +2146,7 @@ scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
   }
 });
 
-scopeSetFunction(slumberGlobals, '_addMethodTo', (self, args) => {
+scopeSetFunction(globalScope, '_addMethodTo', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slClass);
   let cls = args[0];
@@ -2158,7 +2158,7 @@ scopeSetFunction(slumberGlobals, '_addMethodTo', (self, args) => {
   });
 });
 
-scopeSetFunction(slumberGlobals, 'assertRaise', (self, args) => {
+scopeSetFunction(globalScope, 'assertRaise', (self, args) => {
   // TODO: Consider whether I should support 'try/catch' in the language.
   checkargs(args, 1);
   checktype(args[0], slFunction);
@@ -2174,7 +2174,7 @@ scopeSetFunction(slumberGlobals, 'assertRaise', (self, args) => {
 });
 
 
-scopeSetFunction(slumberGlobals, 'assertType', (self, args) => {
+scopeSetFunction(globalScope, 'assertType', (self, args) => {
   checkargsrange(args, 2, 3);
   checktype(args[1], slClass, 'assertType needs Class as its second arg');
   let message;
@@ -2186,7 +2186,7 @@ scopeSetFunction(slumberGlobals, 'assertType', (self, args) => {
 });
 
 
-scopeSetFunction(slumberGlobals, 'isinstance', (self, args) => {
+scopeSetFunction(globalScope, 'isinstance', (self, args) => {
   checkargs(args, 2);
   checktype(args[1], slClass, 'isinstance needs Class as its second arg');
   return args[0].isA(args[1]) ? sltrue : slfalse;
@@ -2196,14 +2196,24 @@ scopeSetFunction(slumberGlobals, 'isinstance', (self, args) => {
 
 let importCaches = new Map();  // string -> SlumberModule objects.
 let importSources = new Map();  // string -> Source objects.
+let nativeSources = new Map();  // string -> Function objects.
 
-function registerModule(m) {
-  checktype(m, slModule);
-  if (typeof m.dat.uri !== 'string') {
+function registerNativeModule(uri, f) {
+  if (typeof uri !== 'string') {
     throw new SlumberError(
-        "Tried to register module, but 'dat' field was corrupt");
+        "Tried to register a native module where uri was not string: " +
+        uri);
   }
-  importCaches[m.dat.uri] = m;
+  if (typeof f !== 'function' || f.length !== 0) {
+    throw new SlumberError(
+        "The second argument to 'registerNativeModule' must be a function " +
+        "that accepts zero arguments and returns a scope object: " + f);
+  }
+  if (importSources.has(uri) || nativeSources.has(uri)) {
+    throw new SlumberError(
+        "A module with uri = " + uri + " is already registered");
+  }
+  nativeSources.set(uri, f);
 }
 
 function registerSource(src) {
@@ -2211,16 +2221,24 @@ function registerSource(src) {
     throw new SlumberError(
         "registerSource argument must be a Source: " + src);
   }
-  importSources[src.uri] = src;
+  if (importSources.has(uri) || nativeSources.has(uri)) {
+    throw new SlumberError(
+        "A module with uri = " + uri + " is already registered");
+  }
+  importSources.set(src.uri, src);
 }
 
 function importModule(uri) {
   if (!importCaches.has(uri)) {
-    if (!importSources.has(uri)) {
+    if (importSources.has(uri)) {
+      importCaches.set(uri, runModule(importSources.get(uri)));
+    } else if (nativeSources.has(uri)) {
+      let f = nativeSources.get(uri);
+      importCaches.set(uri, makeModule(uri, f()));
+    } else {
       throw new SlumberError(
           "Module with uri = " + uri + " is not available");
     }
-    importCaches.set(uri, runModule(importSources.get(uri)));
   }
   return importCaches.get(uri);
 }
@@ -2626,7 +2644,7 @@ function makeGeneratorMethodEvaluator(node, scope, args, self, mroIndex) {
 
 function runModule(source, scope) {
   if (scope === undefined) {
-    scope = newScope(slumberGlobals);
+    scope = newScope(globalScope);
   }
   let node = parse(source);
   makeModuleEvaluator(node, scope).runToCompletion(node);
@@ -2695,7 +2713,7 @@ def assertEqual(actual, expected)
 
 `;
 
-runAndCatch(() => runModule(new Source('<prelude>', PRELUDE), slumberGlobals));
+runAndCatch(() => runModule(new Source('<prelude>', PRELUDE), globalScope));
 
 
 ////// tests
@@ -3093,14 +3111,14 @@ exports.checkargs = checkargs;
 exports.checkargsmin = checkargsmin;
 exports.checkargsrange = checkargsrange;
 exports.checktype = checktype;
-exports.slumberGlobals = slumberGlobals;
+exports.globalScope = globalScope;
+exprots.newScope = newScope;
 exports.scopeSet = scopeSet;
 exports.scopeGet = scopeGet;
 exports.scopeSetFunction = scopeSetFunction;
 exports.addMethod = addMethod;
 exports.runModule = runModule;
 exports.runAndCatch = runAndCatch;
-exports.registerModule = registerModule;
 exports.registerSource = registerSource;
 exports.importModule = importModule;
 exports.getModuleRequirements = getModuleRequirements;
