@@ -1394,7 +1394,11 @@ class Parser {
       let name = this.expect('NAME').val;
       let bases = [];
       if (this.consume('(')) {
+        if (!this.at(')')) {
+          bases.push(this.parseExpression());
+        }
         while (!this.consume(')')) {
+          this.expect(',');
           bases.push(this.parseExpression());
         }
       }
@@ -1665,7 +1669,7 @@ class SlumberModule extends SlumberObject {
   }
 }
 
-let slumberGlobals = Object.create(null);
+let globalScope = Object.create(null);
 
 let SCOPE_PREFIX = 'xxx';
 
@@ -1720,7 +1724,7 @@ slClass.dat.bases = [];
 slClass.dat.mro = [slClass];
 slClass.dat.instantiable = false;
 slClass.dat.isLeaf = true;
-scopeSet(slumberGlobals, 'Class', slClass);
+scopeSet(globalScope, 'Class', slClass);
 addMethod(slClass, '__call', (self, args) => {
   // 'maker' is like __new__ in Python.
   // At least for now though, I only want builtins to be able to
@@ -1753,15 +1757,55 @@ addMethod(slClass, 'getName', (self, args) => {
   return makeString(self.dat.nam);
 });
 
+// '_mergeForC3' is a helper function for handling multiple inheritance.
+// The 'merge' algorithm for the C3 linearization algorithm.
+// This function merges the list of mros from 'unfilteredBaseMros'.
+// This is a pretty inefficient way to run this algorithm, but the inputs
+// here should be almost always very small, so being this inefficient
+// should be ok.
+function _mergeForC3(unfilteredBaseMros) {
+  let baseMros = unfilteredBaseMros.filter(baseMro => baseMro.length > 0);
+  if (baseMros.length === 0) {
+    return [];
+  }
+
+  let nextBase;
+  for (let i = 0; i < baseMros.length; i++) {
+    let candidate = baseMros[i][0];
+    let candidateIsValid = true;
+    for (let baseMro of baseMros) {
+      if (baseMro.indexOf(candidate, 1) !== -1) {
+        candidateIsValid = false;
+        break;
+      }
+    }
+    if (candidateIsValid) {
+      nextBase = candidate;
+      break;
+    }
+  }
+
+  if (nextBase === undefined) {
+    throw new SlumberError(
+        'Cannot create a consistent method resolution order (MRO)');
+  }
+
+  let newBaseMros = [];
+  for (let baseMro of baseMros) {
+    if (baseMro[0] === nextBase) {
+      newBaseMros.push(baseMro.slice(1));
+    } else {
+      newBaseMros.push(baseMro);
+    }
+  }
+
+  return [nextBase].concat(_mergeForC3(newBaseMros));
+}
+
 function makeClass(name, bases, instantiable) {
   let cls = new SlumberObject(slClass, null, {});
   if (bases === undefined) {
     bases = [slObject];
-  }
-
-  // TODO: multiple inheritance with C3 linearization (as in Python).
-  if (bases.length > 1) {
-    throw new SlumberError('Multiple inheritance is not yet supported');
   }
 
   cls.dat.nam = name;
@@ -1778,17 +1822,16 @@ function makeClass(name, bases, instantiable) {
     cls.dat.bases.push(base);
   }
 
-  cls.dat.mro = [cls];
-  if (bases.length > 0) {
-    cls.dat.mro = cls.dat.mro.concat(bases[0].dat.mro);
-  }
+  let baseMros = cls.dat.bases.map(base => base.dat.mro);
+  baseMros.push(cls.dat.bases);
+  cls.dat.mro = [cls].concat(_mergeForC3(baseMros));
 
   return cls;
 }
 
 
 let slObject = makeClass('Object', []);
-scopeSet(slumberGlobals, 'Object', slObject);
+scopeSet(globalScope, 'Object', slObject);
 addMethod(slObject, '__init', (self, args) => {
   checkargs(args, 0);
 });
@@ -1811,11 +1854,10 @@ addMethod(slObject, '__ne', (self, args) => {
 slClass.dat.bases.push(slObject);
 slClass.dat.mro.push(slObject);
 
-
 let slNil = makeClass('Nil');
 let slnil = new SlumberObject(slNil, null);
-scopeSet(slumberGlobals, 'Nil', slNil);
-scopeSet(slumberGlobals, 'nil', slnil);
+scopeSet(globalScope, 'Nil', slNil);
+scopeSet(globalScope, 'nil', slnil);
 addMethod(slNil, '__repr', (self, args) => {
   checkargs(args, 0);
   return makeString('nil');
@@ -1825,9 +1867,9 @@ addMethod(slNil, '__repr', (self, args) => {
 let slBool = makeClass('Bool');
 let sltrue = new SlumberObject(slBool, null, true);
 let slfalse = new SlumberObject(slBool, null, false);
-scopeSet(slumberGlobals, 'Bool', slBool);
-scopeSet(slumberGlobals, 'true', sltrue);
-scopeSet(slumberGlobals, 'false', slfalse);
+scopeSet(globalScope, 'Bool', slBool);
+scopeSet(globalScope, 'true', sltrue);
+scopeSet(globalScope, 'false', slfalse);
 addMethod(slBool, '__repr', (self, args) => {
   return makeString(self.dat ? 'true' : 'false');
 });
@@ -1846,7 +1888,7 @@ function makeNumber(dat) {
   }
   return new SlumberObject(slNumber, null, dat);
 }
-scopeSet(slumberGlobals, 'Number', slNumber);
+scopeSet(globalScope, 'Number', slNumber);
 addMethod(slNumber, '__add', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slNumber);
@@ -1901,7 +1943,7 @@ function makeString(dat) {
   }
   return new SlumberObject(slString, null, dat);
 }
-scopeSet(slumberGlobals, 'String', slString);
+scopeSet(globalScope, 'String', slString);
 addMethod(slString, '__add', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slString);
@@ -1990,7 +2032,7 @@ function makeList(dat) {
 slList.dat.maker = (args) => {
   return makeList(Array.from(args[0]));
 };
-scopeSet(slumberGlobals, 'List', slList);
+scopeSet(globalScope, 'List', slList);
 addMethod(slList, '__len', (self, args) => {
   checkargs(args, 0);
   return makeNumber(self.dat.length);
@@ -2046,7 +2088,7 @@ function makeGenerator(name, f) {
   checkfunc(name, f);
   return makeFunction(name, (self, args) => makeIterator(f(self, args)));
 }
-scopeSet(slumberGlobals, 'Function', slFunction);
+scopeSet(globalScope, 'Function', slFunction);
 addMethod(slFunction, '__call', (self, args, mroIndex) => {
   return self.dat.f(self, args, mroIndex);
 });
@@ -2056,7 +2098,7 @@ let slIterator = makeClass('Iterator');
 function makeIterator(iter) {
   return new SlumberObject(slIterator, null, {iter: iter});
 }
-scopeSet(slumberGlobals, 'Iterator', slIterator);
+scopeSet(globalScope, 'Iterator', slIterator);
 addMethod(slIterator, '__iter', (self, args) => {
   checkargs(args, 0);
   return self;
@@ -2088,15 +2130,15 @@ function makeModule(uri, scope) {
   }
   return new SlumberModule(slModule, map, {uri: uri});
 }
-scopeSet(slumberGlobals, 'Module', slModule);
+scopeSet(globalScope, 'Module', slModule);
 
 
-scopeSetFunction(slumberGlobals, 'print', (self, args) => {
+scopeSetFunction(globalScope, 'print', (self, args) => {
   checkargs(args, 1);
   consoleLog(args[0].toString());
 });
 
-scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
+scopeSetFunction(globalScope, 'assert', (self, args) => {
   checkargsrange(args, 1, 2);
   if (!args[0].truthy()) {
     let message = args.length === 2 ? args[1].toString() : 'assertion error';
@@ -2104,7 +2146,7 @@ scopeSetFunction(slumberGlobals, 'assert', (self, args) => {
   }
 });
 
-scopeSetFunction(slumberGlobals, '_addMethodTo', (self, args) => {
+scopeSetFunction(globalScope, '_addMethodTo', (self, args) => {
   checkargs(args, 1);
   checktype(args[0], slClass);
   let cls = args[0];
@@ -2116,7 +2158,7 @@ scopeSetFunction(slumberGlobals, '_addMethodTo', (self, args) => {
   });
 });
 
-scopeSetFunction(slumberGlobals, 'assertRaise', (self, args) => {
+scopeSetFunction(globalScope, 'assertRaise', (self, args) => {
   // TODO: Consider whether I should support 'try/catch' in the language.
   checkargs(args, 1);
   checktype(args[0], slFunction);
@@ -2132,7 +2174,7 @@ scopeSetFunction(slumberGlobals, 'assertRaise', (self, args) => {
 });
 
 
-scopeSetFunction(slumberGlobals, 'assertType', (self, args) => {
+scopeSetFunction(globalScope, 'assertType', (self, args) => {
   checkargsrange(args, 2, 3);
   checktype(args[1], slClass, 'assertType needs Class as its second arg');
   let message;
@@ -2144,7 +2186,7 @@ scopeSetFunction(slumberGlobals, 'assertType', (self, args) => {
 });
 
 
-scopeSetFunction(slumberGlobals, 'isinstance', (self, args) => {
+scopeSetFunction(globalScope, 'isinstance', (self, args) => {
   checkargs(args, 2);
   checktype(args[1], slClass, 'isinstance needs Class as its second arg');
   return args[0].isA(args[1]) ? sltrue : slfalse;
@@ -2154,14 +2196,24 @@ scopeSetFunction(slumberGlobals, 'isinstance', (self, args) => {
 
 let importCaches = new Map();  // string -> SlumberModule objects.
 let importSources = new Map();  // string -> Source objects.
+let nativeSources = new Map();  // string -> Function objects.
 
-function registerModule(m) {
-  checktype(m, slModule);
-  if (typeof m.dat.uri !== 'string') {
+function registerNativeModule(uri, f) {
+  if (typeof uri !== 'string') {
     throw new SlumberError(
-        "Tried to register module, but 'dat' field was corrupt");
+        "Tried to register a native module where uri was not string: " +
+        uri);
   }
-  importCaches[m.dat.uri] = m;
+  if (typeof f !== 'function' || f.length !== 0) {
+    throw new SlumberError(
+        "The second argument to 'registerNativeModule' must be a function " +
+        "that accepts zero arguments and returns a scope object: " + f);
+  }
+  if (importSources.has(uri) || nativeSources.has(uri)) {
+    throw new SlumberError(
+        "A module with uri = " + uri + " is already registered");
+  }
+  nativeSources.set(uri, f);
 }
 
 function registerSource(src) {
@@ -2169,16 +2221,24 @@ function registerSource(src) {
     throw new SlumberError(
         "registerSource argument must be a Source: " + src);
   }
-  importSources[src.uri] = src;
+  if (importSources.has(uri) || nativeSources.has(uri)) {
+    throw new SlumberError(
+        "A module with uri = " + uri + " is already registered");
+  }
+  importSources.set(src.uri, src);
 }
 
 function importModule(uri) {
   if (!importCaches.has(uri)) {
-    if (!importSources.has(uri)) {
+    if (importSources.has(uri)) {
+      importCaches.set(uri, runModule(importSources.get(uri)));
+    } else if (nativeSources.has(uri)) {
+      let f = nativeSources.get(uri);
+      importCaches.set(uri, makeModule(uri, f()));
+    } else {
       throw new SlumberError(
           "Module with uri = " + uri + " is not available");
     }
-    importCaches.set(uri, runModule(importSources.get(uri)));
   }
   return importCaches.get(uri);
 }
@@ -2455,7 +2515,7 @@ class Evaluator {
     if (bases.length === 0) {
       bases.push(slObject);
     }
-    let cls = makeClass(name, bases, true);
+    let cls = callWithTrace(node.token, () => makeClass(name, bases, true));
     let methods = node.methods;
     let scope = this.scp;
     let astToMethod = m => {
@@ -2584,7 +2644,7 @@ function makeGeneratorMethodEvaluator(node, scope, args, self, mroIndex) {
 
 function runModule(source, scope) {
   if (scope === undefined) {
-    scope = newScope(slumberGlobals);
+    scope = newScope(globalScope);
   }
   let node = parse(source);
   makeModuleEvaluator(node, scope).runToCompletion(node);
@@ -2653,7 +2713,7 @@ def assertEqual(actual, expected)
 
 `;
 
-runAndCatch(() => runModule(new Source('<prelude>', PRELUDE), slumberGlobals));
+runAndCatch(() => runModule(new Source('<prelude>', PRELUDE), globalScope));
 
 
 ////// tests
@@ -2754,6 +2814,30 @@ else
   // for now just be ok that it doesn't throw, and inspect
   // results by hand as necessary with toString.
 }
+
+// simple '_mergeForC3' test
+
+{
+  let mro = _mergeForC3([[1], [1]]);
+  assert(mro.length === 1, mro.length);
+
+  let thrown = false;
+  try {
+    _mergeForC3([[1, 2], [2, 1]]);
+  } catch (e) {
+    thrown = true;
+  }
+  assert(thrown, 'When consistent merge is impossible, should throw');
+
+  mro = _mergeForC3([[5], [3, 4], [1, 2], [1, 2], [2, 3], [1, 2, 3, 4, 5]]);
+  assert(mro.length === 5, mro.length);
+  assert(mro[0] === 1, mro[0]);
+  assert(mro[1] === 2, mro[1]);
+  assert(mro[2] === 3, mro[2]);
+  assert(mro[3] === 4, mro[3]);
+  assert(mro[4] === 5, mro[4]);
+}
+
 
 // simple run test
 {
@@ -2959,6 +3043,50 @@ def f(s: String)
 assertRaise(\\. f(5))
 assertEqual(f('Bob'), 'hi Bob')
 
+# Multiple inheritance
+def testMultipleInheritance()
+
+  # Test that an exception is raised if a consistent MRO cannot be found.
+  def testInconsistentMro()
+    class C(Object, A)
+      pass
+
+  assertRaise(testInconsistentMro)
+
+  # Test that MRO ordering is consistent.
+  class R(Object)
+    def meth()
+      return 'R.meth'
+
+  class A(R)
+    def meth()
+      return 'A.meth/' + super.meth()
+
+  class B(A)
+    def meth()
+      return 'B.meth/' + super.meth()
+
+  class C(R)
+    def meth()
+      return 'C.meth/' + super.meth()
+
+  class D(B, C)
+    def meth()
+      return 'D.meth/' + super.meth()
+
+  class E(C, B)
+    def meth()
+      return 'E.meth/' + super.meth()
+
+  assertEqual(R().meth(), 'R.meth')
+  assertEqual(A().meth(), 'A.meth/R.meth')
+  assertEqual(B().meth(), 'B.meth/A.meth/R.meth')
+  assertEqual(C().meth(), 'C.meth/R.meth')
+  assertEqual(D().meth(), 'D.meth/B.meth/A.meth/C.meth/R.meth')
+  assertEqual(E().meth(), 'E.meth/C.meth/B.meth/A.meth/R.meth')
+
+testMultipleInheritance()
+
 # print("simple run test2 pass")
 `;
   let src = new Source('<run test>', dat);
@@ -2983,14 +3111,14 @@ exports.checkargs = checkargs;
 exports.checkargsmin = checkargsmin;
 exports.checkargsrange = checkargsrange;
 exports.checktype = checktype;
-exports.slumberGlobals = slumberGlobals;
+exports.globalScope = globalScope;
+exprots.newScope = newScope;
 exports.scopeSet = scopeSet;
 exports.scopeGet = scopeGet;
 exports.scopeSetFunction = scopeSetFunction;
 exports.addMethod = addMethod;
 exports.runModule = runModule;
 exports.runAndCatch = runAndCatch;
-exports.registerModule = registerModule;
 exports.registerSource = registerSource;
 exports.importModule = importModule;
 exports.getModuleRequirements = getModuleRequirements;
