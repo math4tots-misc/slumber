@@ -1394,7 +1394,11 @@ class Parser {
       let name = this.expect('NAME').val;
       let bases = [];
       if (this.consume('(')) {
+        if (!this.at(')')) {
+          bases.push(this.parseExpression());
+        }
         while (!this.consume(')')) {
+          this.expect(',');
           bases.push(this.parseExpression());
         }
       }
@@ -1753,15 +1757,55 @@ addMethod(slClass, 'getName', (self, args) => {
   return makeString(self.dat.nam);
 });
 
+// '_mergeForC3' is a helper function for handling multiple inheritance.
+// The 'merge' algorithm for the C3 linearization algorithm.
+// This function merges the list of mros from 'unfilteredBaseMros'.
+// This is a pretty inefficient way to run this algorithm, but the inputs
+// here should be almost always very small, so being this inefficient
+// should be ok.
+function _mergeForC3(unfilteredBaseMros) {
+  let baseMros = unfilteredBaseMros.filter(baseMro => baseMro.length > 0);
+  if (baseMros.length === 0) {
+    return [];
+  }
+
+  let nextBase;
+  for (let i = 0; i < baseMros.length; i++) {
+    let candidate = baseMros[i][0];
+    let candidateIsValid = true;
+    for (let baseMro of baseMros) {
+      if (baseMro.indexOf(candidate, 1) !== -1) {
+        candidateIsValid = false;
+        break;
+      }
+    }
+    if (candidateIsValid) {
+      nextBase = candidate;
+      break;
+    }
+  }
+
+  if (nextBase === undefined) {
+    throw new SlumberError(
+        'Cannot create a consistent method resolution order (MRO)');
+  }
+
+  let newBaseMros = [];
+  for (let baseMro of baseMros) {
+    if (baseMro[0] === nextBase) {
+      newBaseMros.push(baseMro.slice(1));
+    } else {
+      newBaseMros.push(baseMro);
+    }
+  }
+
+  return [nextBase].concat(_mergeForC3(newBaseMros));
+}
+
 function makeClass(name, bases, instantiable) {
   let cls = new SlumberObject(slClass, null, {});
   if (bases === undefined) {
     bases = [slObject];
-  }
-
-  // TODO: multiple inheritance with C3 linearization (as in Python).
-  if (bases.length > 1) {
-    throw new SlumberError('Multiple inheritance is not yet supported');
   }
 
   cls.dat.nam = name;
@@ -1778,10 +1822,9 @@ function makeClass(name, bases, instantiable) {
     cls.dat.bases.push(base);
   }
 
-  cls.dat.mro = [cls];
-  if (bases.length > 0) {
-    cls.dat.mro = cls.dat.mro.concat(bases[0].dat.mro);
-  }
+  let baseMros = cls.dat.bases.map(base => base.dat.mro);
+  baseMros.push(cls.dat.bases);
+  cls.dat.mro = [cls].concat(_mergeForC3(baseMros));
 
   return cls;
 }
@@ -1810,7 +1853,6 @@ addMethod(slObject, '__ne', (self, args) => {
 
 slClass.dat.bases.push(slObject);
 slClass.dat.mro.push(slObject);
-
 
 let slNil = makeClass('Nil');
 let slnil = new SlumberObject(slNil, null);
@@ -2455,7 +2497,7 @@ class Evaluator {
     if (bases.length === 0) {
       bases.push(slObject);
     }
-    let cls = makeClass(name, bases, true);
+    let cls = callWithTrace(node.token, () => makeClass(name, bases, true));
     let methods = node.methods;
     let scope = this.scp;
     let astToMethod = m => {
@@ -2755,6 +2797,30 @@ else
   // results by hand as necessary with toString.
 }
 
+// simple '_mergeForC3' test
+
+{
+  let mro = _mergeForC3([[1], [1]]);
+  assert(mro.length === 1, mro.length);
+
+  let thrown = false;
+  try {
+    _mergeForC3([[1, 2], [2, 1]]);
+  } catch (e) {
+    thrown = true;
+  }
+  assert(thrown, 'When consistent merge is impossible, should throw');
+
+  mro = _mergeForC3([[5], [3, 4], [1, 2], [1, 2], [2, 3], [1, 2, 3, 4, 5]]);
+  assert(mro.length === 5, mro.length);
+  assert(mro[0] === 1, mro[0]);
+  assert(mro[1] === 2, mro[1]);
+  assert(mro[2] === 3, mro[2]);
+  assert(mro[3] === 4, mro[3]);
+  assert(mro[4] === 5, mro[4]);
+}
+
+
 // simple run test
 {
   let dat = `
@@ -2958,6 +3024,50 @@ def f(s: String)
 
 assertRaise(\\. f(5))
 assertEqual(f('Bob'), 'hi Bob')
+
+# Multiple inheritance
+def testMultipleInheritance()
+
+  # Test that an exception is raised if a consistent MRO cannot be found.
+  def testInconsistentMro()
+    class C(Object, A)
+      pass
+
+  assertRaise(testInconsistentMro)
+
+  # Test that MRO ordering is consistent.
+  class R(Object)
+    def meth()
+      return 'R.meth'
+
+  class A(R)
+    def meth()
+      return 'A.meth/' + super.meth()
+
+  class B(A)
+    def meth()
+      return 'B.meth/' + super.meth()
+
+  class C(R)
+    def meth()
+      return 'C.meth/' + super.meth()
+
+  class D(B, C)
+    def meth()
+      return 'D.meth/' + super.meth()
+
+  class E(C, B)
+    def meth()
+      return 'E.meth/' + super.meth()
+
+  assertEqual(R().meth(), 'R.meth')
+  assertEqual(A().meth(), 'A.meth/R.meth')
+  assertEqual(B().meth(), 'B.meth/A.meth/R.meth')
+  assertEqual(C().meth(), 'C.meth/R.meth')
+  assertEqual(D().meth(), 'D.meth/B.meth/A.meth/C.meth/R.meth')
+  assertEqual(E().meth(), 'E.meth/C.meth/B.meth/A.meth/R.meth')
+
+testMultipleInheritance()
 
 # print("simple run test2 pass")
 `;
