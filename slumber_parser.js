@@ -24,6 +24,15 @@
 ////// Ast
 ////// Parser
 
+let slumberParser;
+
+if (typeof module !== 'undefined' && module.exports) {
+  slumberParser = module.exports;
+} else {
+  slumberParser = {};
+}
+
+(function(exports) {
 ////// Source, Token and SlumberError
 class Source {
   constructor(uri, dat) {
@@ -1517,3 +1526,4 @@ if (require.main === module) {
 exports.test = test;
 exports.Source = Source;
 exports.parse = parse;
+})(slumberParser);
