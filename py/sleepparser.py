@@ -27,7 +27,7 @@ class ParseError(Exception):
 KEYWORDS = {
     'interface', 'class', 'public', 'private', 'static',
     'extends', 'implements',
-    'from', 'import', 'as',
+    'package', 'from', 'import', 'as',
     'while', 'break', 'continue', 'if', 'else', 'return',
     'not', 'and', 'or',
 }
@@ -181,9 +181,9 @@ class Ast(object):
         self.token = token
 
 class FileInput(Ast):
-    def __init__(self, token, uri, imports, interfaces, classes):
+    def __init__(self, token, package, imports, interfaces, classes):
         super(FileInput, self).__init__(token)
-        self.uri = uri  # string
+        self.package = package  # [string]
         self.imports = imports  # [ImportDeclaration]
         self.interfaces = interfaces  # [InterfaceDefinition]
         self.classes = classes  # [ClassDefinition]
@@ -192,9 +192,9 @@ class FileInput(Ast):
         return visitor.visit_file_input(self)
 
 class ImportDeclaration(Ast):
-    def __init__(self, token, uri, name, alias):
+    def __init__(self, token, package, name, alias):
         super(ImportDeclaration, self).__init__(token)
-        self.uri = uri  # string
+        self.package = package  # [string]
         self.name = name  # string
         self.alias = alias  # string
 
@@ -238,6 +238,9 @@ class Typename(Ast):
     def __init__(self, token, name):
         super(Typename, self).__init__(token)
         self.name = name  # string
+
+        # To be filled in by annotator
+        self.full_name = None  # string
 
     def accept(self, visitor):
         return visitor.visit_typename(self)
@@ -332,11 +335,8 @@ class Expression(Ast):
     def __init__(self, token):
         super(Expression, self).__init__(token)
 
-        # Type to be deduced by the annotator
-        # A deduced type consists of a (uri, name) pair,
-        # where 'uri' is the uri of the FileInput and
-        # 'name' is the name of the class in that uri.
-        self.deduced_type = None
+        # To be filled in by annotator
+        self.deduced_type = None  # string
 
 class StringLiteral(Expression):
     def __init__(self, token, value):
@@ -526,19 +526,27 @@ class Parser(object):
 
     def parse_file_input(self):
         token = self.peek()
-        uri = token.source.uri
+        package = []
         imports = []
         interfaces = []
         classes = []
-        while self.consume('from'):
-            uri = self.expect('STRING').value
-            self.expect('import')
+
+        if self.consume('package'):
+            package.append(self.expect('NAME').value)
+            while self.consume('.'):
+                package.append(self.expect('NAME').value)
+
+        while self.consume('import'):
+            pkg = []
+            while self.at('NAME'):
+                pkg.append(self.expect('NAME').value)
+                self.consume('.')
             name = self.expect('TYPENAME').value
             if self.consume('as'):
                 alias = self.expect('TYPENAME').value
             else:
                 alias = name
-            imports.append(ImportDeclaration(token, uri, name, alias))
+            imports.append(ImportDeclaration(token, pkg, name, alias))
 
         while not self.at('EOF'):
             if self.at('interface'):
@@ -550,7 +558,7 @@ class Parser(object):
                     self.peek(),
                     "Expected a class or interface definition")
 
-        return FileInput(token, uri, imports, interfaces, classes)
+        return FileInput(token, package, imports, interfaces, classes)
 
     def parse_interface_definition(self):
         token = self.expect('interface')
@@ -747,8 +755,6 @@ class Parser(object):
 
         return expr
 
-
-
     def parse_additive_expression(self):
         expr = self.parse_multiplicative_expression()
         while True:
@@ -880,7 +886,4 @@ class Parser(object):
 
 def parse(source):
     return Parser(source).parse_file_input()
-
-
-
 

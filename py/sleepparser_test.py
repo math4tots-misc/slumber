@@ -1,5 +1,5 @@
 import unittest
-import sleep
+import sleepparser as sleep
 
 
 class TestCase(unittest.TestCase):
@@ -64,18 +64,29 @@ class ExampleClass {
 """)
 
 SIMPLE_PARSER_EXPRESSION_EXAMPLE = sleep.Source(
-    '<SIMPLE_PARSER_EXPRESSION_EXAMPLE',
+    '<SIMPLE_PARSER_EXPRESSION_EXAMPLE>',
     "5 + 7 > 10 ? 'yes' : 'no'")
+
+PARSER_IMPORT_EXAMPLE = sleep.Source(
+    '<PARSER_IMPORT_EXAMPLE>', r"""
+package org.sample
+
+import com.foo.Bar
+import com.bar.Baz as Bazy
+
+""")
 
 class ParserTestCase(TestCase):
 
     def test_empty_parser_example(self):
         ast = sleep.parse(EMPTY_PARSER_EXAMPLE)
         self.assertEqual(type(ast), sleep.FileInput)
+        self.assertEqual(ast.package, [])
 
     def test_simple_interface_example(self):
         ast = sleep.parse(SIMPLE_PARSER_INTERFACE_EXAMPLE)
         self.assertEqual(type(ast), sleep.FileInput)
+        self.assertEqual(ast.package, [])
 
         interfaces = ast.interfaces
         interface_names = [interface.name for interface in interfaces]
@@ -109,6 +120,7 @@ class ParserTestCase(TestCase):
     def test_simple_class_example(self):
         ast = sleep.parse(SIMPLE_PARSER_CLASS_EXAMPLE)
         self.assertEqual(type(ast), sleep.FileInput)
+        self.assertEqual(ast.package, [])
         classes = ast.classes
         class_names = [cls.name for cls in classes]
         self.assertEqual(class_names, ['ExampleClass'])
@@ -126,6 +138,28 @@ class ParserTestCase(TestCase):
         parser = sleep.Parser(SIMPLE_PARSER_EXPRESSION_EXAMPLE)
         ast = parser.parse_expression()
         self.assertEqual(type(ast), sleep.TernaryExpression)
+
+    def test_import_example(self):
+        ast = sleep.parse(PARSER_IMPORT_EXAMPLE)
+        self.assertEqual(ast.package, ['org', 'sample'])
+        imports = ast.imports
+        ids = [(i.package, i.name, i.alias) for i in imports]
+        self.assertEqual(
+            ids,
+            [
+                (['com', 'foo'], 'Bar', 'Bar'),
+                (['com', 'bar'], 'Baz', 'Bazy'),
+            ])
+
+
+class TestLoader(object):
+    def __init__(self, table):
+        self.table = table
+
+    def load(self, uri):
+        return self.table[uri]
+
+
 
 
 if __name__ == '__main__':
