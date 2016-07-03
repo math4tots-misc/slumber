@@ -36,14 +36,14 @@ PRIMITIVE_TYPES = {
     'void', 'int', 'float', 'bool',
 }
 
-SYMBOLS = tuple(reversed(sorted({
+SYMBOLS = tuple(reversed(sorted((
     '(', ')', '[', ']', '{', '}',
     '=', '+=', '-=', '%=', '*=', '/=',
     '+', '-', '*', '/', '%',
     '<', '>', '<=', '>=', '==', '!=',
     '?', ':',
     ';', '.', ',',
-})))
+))))
 
 ESCAPE_TABLE = {
     'n': '\n',
