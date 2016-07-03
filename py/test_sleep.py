@@ -82,6 +82,8 @@ class ParserTestCase(TestCase):
         stub_names = [stub.name for stub in stubs]
         self.assertEqual(stub_names, ['exampleMethod', 'secondMethod'])
 
+        self.assertEqual(len(stubs), 2)
+
         # inspect exampleMethod
         stub = stubs[0]
         self.assertEqual(stub.name, 'exampleMethod')
@@ -94,12 +96,29 @@ class ParserTestCase(TestCase):
         self.assertEqual(arglist[1][0].name, 'float')
         self.assertEqual(arglist[1][1], 'arg1')
 
+        # inspect secondMethod
+        stub = stubs[1]
+        self.assertEqual(stub.name, 'secondMethod')
+        self.assertEqual(stub.returns.name, 'float')
+        arglist = stub.arglist
+        self.assertEqual(len(arglist), 0)
+
     def test_simple_class_example(self):
         ast = sleep.parse(SIMPLE_PARSER_CLASS_EXAMPLE)
         self.assertEqual(type(ast), sleep.FileInput)
         classes = ast.classes
         class_names = [cls.name for cls in classes]
         self.assertEqual(class_names, ['ExampleClass'])
+
+        methods = list(classes[0].methods)
+        self.assertEqual(len(methods), 1)
+
+        # inspect toString
+        method = methods[0]
+        self.assertEqual(method.name, 'toString')
+        self.assertEqual(method.returns.name, 'String')
+        self.assertEqual(len(method.arglist), 0)
+
 
 if __name__ == '__main__':
     unittest.main()
