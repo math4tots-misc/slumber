@@ -1,5 +1,7 @@
-OPEN = '('
-CLOSE = ')'
+OPEN_PARENTHESIS = '('
+CLOSE_PARENTHESIS = ')'
+OPEN_BRACKET = '['
+CLOSE_BRACKET = ']'
 
 class Source(object):
     def __init__(self, uri, text):
@@ -26,8 +28,8 @@ KEYWORDS = {
     'interface', 'class', 'public', 'private', 'static',
     'extends', 'implements',
     'from', 'import', 'as',
-    'while', 'break', 'continue', 'if', 'else',
-    'return',
+    'while', 'break', 'continue', 'if', 'else', 'return',
+    'not', 'and', 'or',
 }
 
 PRIMITIVE_TYPES = {
@@ -39,6 +41,7 @@ SYMBOLS = tuple(reversed(sorted({
     '=', '+=', '-=', '%=', '*=', '/=',
     '+', '-', '*', '/', '%',
     '<', '>', '<=', '>=', '==', '!=',
+    '?', ':',
     ';', '.', ',',
 })))
 
@@ -393,6 +396,12 @@ class NewExpression(Expression):
     def accept(self, visitor):
         return visitor.visit_new_expression(self)
 
+class SuperMethodCallExpression(Expression):
+    def __init__(self, token, method_name, args):
+        super(SuperMethodCallExpression, self).__init__(token)
+        self.method_name = method_name  # string
+        self.args = args  # [Expression]
+
 class MethodCallExpression(Expression):
     def __init__(self, token, target, method_name, args):
         super(MethodCallExpression, self).__init__(token)
@@ -450,6 +459,14 @@ class SetStaticAttributeExpression(Expression):
 
     def accept(self, visitor):
         return visitor.visit_set_static_attribute_expression(self)
+
+class NotExpression(Expression):
+    def __init__(self, token, target):
+        super(NotExpression, self).__init__(token)
+        self.target = target  # Expression
+
+    def accept(self, visitor):
+        return visitor.visit_not_expression(self)
 
 class AndExpression(Expression):
     def __init__(self, token, left, right):
@@ -565,14 +582,14 @@ class Parser(object):
                  self.tokens[self.pos + 2].type != '(')) # )
 
     def parse_arglist(self):
-        self.expect(OPEN)
+        self.expect(OPEN_PARENTHESIS)
         arglist = []
-        while not self.consume(CLOSE):
+        while not self.consume(CLOSE_PARENTHESIS):
             argtype = self.parse_typename()
             argname = self.expect('NAME').value
-            if not self.at(CLOSE):
-                self.expect(',')
             arglist.append((argtype, argname))
+            if not self.at(CLOSE_PARENTHESIS):
+                self.expect(',')
         return arglist
 
     def parse_class_definition(self):
@@ -662,7 +679,138 @@ class Parser(object):
             return ExpressionStatement(token, expr)
 
     def parse_expression(self):
-        return self.parse_primary_expression()
+        return self.parse_ternary_expression()
+
+    def parse_ternary_expression(self):
+        expr = self.parse_or_expression()
+        token = self.peek()
+        if self.consume('?'):
+            lhs = self.parse_expression()
+            self.expect(':')
+            rhs = self.parse_ternary_expression()
+            return TernaryExpression(token, expr, lhs, rhs)
+        return expr
+
+    def parse_or_expression(self):
+        expr = self.parse_and_expression()
+        while True:
+            token = self.peek()
+            if self.consume('or'):
+                rhs = self.parse_and_expression()
+                expr = OrExpression(token, expr, rhs)
+            else:
+                break
+        return expr
+
+    def parse_and_expression(self):
+        expr = self.parse_not_expression()
+        while True:
+            token = self.peek()
+            if self.consume('and'):
+                rhs = self.parse_not_expression()
+                expr = AndExpression(token, expr, rhs)
+            else:
+                break
+        return expr
+
+    def parse_not_expression(self):
+        token = self.peek()
+        if self.consume('not'):
+            return NotExpression(token, self.parse_comparison_expression())
+        else:
+            return self.parse_comparison_expression()
+
+    def parse_comparison_expression(self):
+        # TODO: Treat comparison chaining in a special way:
+        # e.g. 'a == b == c' should be equivalent to 'a == b and b == c'
+        # Until then, simply don't allow chaining.
+        expr = self.parse_additive_expression()
+        token = self.peek()
+        if self.consume('<'):
+            rhs = self.parse_additive_expression()
+            return MethodCallExpression(token, expr, '__lt__', [rhs])
+        if self.consume('<='):
+            rhs = self.parse_additive_expression()
+            return MethodCallExpression(token, expr, '__le__', [rhs])
+        if self.consume('>'):
+            rhs = self.parse_additive_expression()
+            return MethodCallExpression(token, expr, '__gt__', [rhs])
+        if self.consume('>='):
+            rhs = self.parse_additive_expression()
+            return MethodCallExpression(token, expr, '__ge__', [rhs])
+        if self.consume('=='):
+            rhs = self.parse_additive_expression()
+            return MethodCallExpression(token, expr, '__eq__', [rhs])
+        if self.consume('!='):
+            rhs = self.parse_additive_expression()
+            return MethodCallExpression(token, expr, '__ne__', [rhs])
+
+        return expr
+
+
+
+    def parse_additive_expression(self):
+        expr = self.parse_multiplicative_expression()
+        while True:
+            token = self.peek()
+            if self.consume('+'):
+                rhs = self.parse_multiplicative_expression()
+                expr = MethodCallExpression(token, expr, '__add__', [rhs])
+            elif self.consume('-'):
+                rhs = self.parse_multiplicative_expression()
+                expr = MethodCallExpression(token, expr, '__sub__', [rhs])
+            else:
+                break
+        return expr
+
+    def parse_multiplicative_expression(self):
+        expr = self.parse_prefix_expression()
+        while True:
+            token = self.peek()
+            if self.consume('*'):
+                rhs = self.parse_prefix_expression()
+                expr = MethodCallExpression(token, expr, '__mul__', [rhs])
+            elif self.consume('/'):
+                rhs = self.parse_prefix_expression()
+                expr = MethodCallExpression(token, expr, '__div__', [rhs])
+            elif self.consume('%'):
+                rhs = self.parse_prefix_expression()
+                expr = MethodCallExpression(token, expr, '__mod__', [rhs])
+            else:
+                break
+        return expr
+
+    def parse_prefix_expression(self):
+        token = self.peek()
+        if self.consume('-'):
+            return MethodCallExpression(
+                token, self.parse_postfix_expression(), '__neg__', [])
+        elif self.consume('+'):
+            return MethodCallExpression(
+                token, self.parse_postfix_expression(), '__neg__', [])
+        return self.parse_postfix_expression()
+
+    def parse_postfix_expression(self):
+        expr = self.parse_primary_expression()
+        while True:
+            token = self.peek()
+            if self.consume('.'):
+                name = self.expect('NAME').value
+                if self.consume(OPEN_PARENTHESIS):
+                    args = []
+                    while not self.consume(CLOSE_PARENTHESIS):
+                        args.append(self.parse_expression())
+                        if not self.at(CLOSE_PARENTHESIS):
+                            self.expect(',')
+                    expr = MethodCallExpression(token, expr, name, args)
+                elif self.consume('='):
+                    value = self.parse_expression()
+                    expr = SetAttributeExpression(token, expr, name, value)
+                else:
+                    expr = GetAttributeExpression(token, expr, name)
+            else:
+                break
+        return expr
 
     def parse_primary_expression(self):
         token = self.peek()
@@ -670,10 +818,65 @@ class Parser(object):
             expr = self.parse_expression()
             self.expect(')')
             return expr
+        elif self.consume('NAME'):
+            if self.consume('='):
+                value = self.parse_expression()
+                return AssignExpression(token, token.value, value)
+            else:
+                return NameExpression(token, token.value)
+        elif self.consume('INT'):
+            return IntLiteral(token, token.value)
+        elif self.consume('FLOAT'):
+            return FloatLiteral(token, token.value)
         elif self.consume('STRING'):
             return StringLiteral(token, token.value)
-        else:
-            raise Exception()  # TODO: ParseError
+        elif self.consume(OPEN_BRACKET):
+            exprs = []
+            while not self.consume(CLOSE_BRACKET):
+                exprs.append(self.parse_expression())
+                if not self.at(CLOSE_BRACKET):
+                    self.expect(',')
+            return ListDisplay(token, exprs)
+        elif self.at('TYPENAME'):
+            type_ = self.parse_typename()
+            token = self.peek()
+            if self.consume(OPEN_PARENTHESIS):
+                args = []
+                while not self.consume(CLOSE_PARENTHESIS):
+                    args.append(self.parse_expression())
+                    if not self.at(CLOSE_PARENTHESIS):
+                        self.expect(',')
+                return NewExpression(token, type_, args)
+            elif self.consume('.'):
+                name = self.expect('NAME').value
+                if self.consume(OPEN_PARENTHESIS):
+                    args = []
+                    while not self.consume(CLOSE_PARENTHESIS):
+                        args.append(self.parse_expression())
+                        if not self.at(CLOSE_PARENTHESIS):
+                            self.expect(',')
+                    return StaticMethodCallExpression(
+                        token, type_, name, args)
+                elif self.consume('='):
+                    value = self.parse_expression()
+                    return SetStaticAttributeExpression(
+                        token, type_, name, value)
+                else:
+                    return GetStaticAttributeExpression(token, type_, name)
+            else:
+                raise ParseError(token, "Expected static method call")
+        elif self.consume('super'):
+            self.expect('.')
+            method_name = self.expect('NAME').value
+            self.expect(OPEN_PARENTHESIS)
+            args = []
+            while not self.consume(CLOSE_PARENTHESIS):
+                args.append(self.parse_expression())
+                if not self.at(CLOSE_PARENTHESIS):
+                    self.expect(',')
+            return SuperMethodCallExpression(token, method_name, args)
+
+        raise ParseError(self.peek(), "Expected expression")
 
 def parse(source):
     return Parser(source).parse_file_input()

@@ -61,8 +61,11 @@ class ExampleClass {
         return '<example>';
     }
 }
-
 """)
+
+SIMPLE_PARSER_EXPRESSION_EXAMPLE = sleep.Source(
+    '<SIMPLE_PARSER_EXPRESSION_EXAMPLE',
+    "5 + 7 > 10 ? 'yes' : 'no'")
 
 class ParserTestCase(TestCase):
 
@@ -118,6 +121,11 @@ class ParserTestCase(TestCase):
         self.assertEqual(method.name, 'toString')
         self.assertEqual(method.returns.name, 'String')
         self.assertEqual(len(method.arglist), 0)
+
+    def test_simple_expression_example(self):
+        parser = sleep.Parser(SIMPLE_PARSER_EXPRESSION_EXAMPLE)
+        ast = parser.parse_expression()
+        self.assertEqual(type(ast), sleep.TernaryExpression)
 
 
 if __name__ == '__main__':
