@@ -82,13 +82,16 @@ class Annotator(object):
         for scope in reversed(self.scopes):
             if name in scope:
                 return scope[name]
-        raise TranspileError(
+        raise CompileError(
             token, "No such variable named '" + name + "' at this scope")
 
     def visit(self, node):
         return node.accept(self)
 
     def visit_class(self, node):
+        if node.is_native or node.is_interface:
+            return
+
         for method in node.methods:
             self.push_scope()
             for type_, name in method.args:
@@ -96,32 +99,57 @@ class Annotator(object):
             self.visit(method.body)
             self.pop_scope()
 
+    def visit_block(self, node):
+        for statement in node.statements:
+            self.visit(statement)
+
+    def visit_expression_statement(self, node):
+        self.visit(node.expr)
+
+    def get_member_type(self, token, type_, name):
+        if type_ not in self.type_data:
+            raise CompileError(token, "No such type: " + type_)
+        attrs = self.type_data[type_]
+        if name not in attrs:
+            raise CompileError(
+                token, "No such attribute %s for type %s" % (name, type_))
+        return attrs[name]
+
     def visit_method_call(self, node):
         self.visit(node.owner)
         for arg in node.args:
             self.visit(arg)
-        t = self.type_data[node.owner.deduced_type][node.method_name]
+        t = self.get_member_type(
+            node.token, node.owner.deduced_type, node.method_name)
         if isinstance(t, str):
-            raise TranspileError(
+            raise CompileError(
                 node.token,
-                "Tried to call member like a method: %s.%s" % (
+                "Tried to call attribute like a method: %s.%s" % (
                 node.owner.deduced_type, node.method_name))
-        returns, argtypes = t
-        argts = tuple(arg.deduced_type for arg in argtypes)
-        if argtypes != argts:
-            raise TranspileError(
-                node.token,
-                "Expected args don't match actual args: %s.%s" % (
-                node.owner.deduced_type, node.method_name))
+        returns, expected_argtypes = t
+        argts = tuple(arg.deduced_type for arg in node.args)
+        # TODO: Check that expected_argtypes are bases of argts
         node.deduced_type = returns
 
     def visit_get_attribute(self, node):
         self.visit(node.owner)
-        t = self.type_data[node.owner.deduced_type][node.attribute_name]
+        t = self.get_member_type(
+            node.token, node.owner.deduced_type, node.attribute_name)
         if isinstance(t, tuple):
-            raise TranspileError(
+            raise CompileError(
                 node.token,
-                "Tried to use method like a member: %s.%s" % (
+                "Tried to use method like an attribute: %s.%s" % (
+                node.owner.deduced_type, node.attribute_name))
+        node.deduced_type = t
+
+    def visit_get_static_attribute(self, node):
+        deduced_type = node.type
+        t = self.get_member_type(
+            node.token, deduced_type, node.attribute_name)
+        if isinstance(t, tuple):
+            raise CompileError(
+                node.token,
+                "Tried to use method like a static attribute: %s.%s" % (
                 node.owner.deduced_type, node.attribute_name))
         node.deduced_type = t
 

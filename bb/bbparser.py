@@ -16,6 +16,7 @@ CompileError = bblexer.CompileError
 PRIMITIVE_TYPES = bblexer.PRIMITIVE_TYPES
 BUILTIN_TYPES = {
     'String', 'List',
+    'System',
 }
 
 

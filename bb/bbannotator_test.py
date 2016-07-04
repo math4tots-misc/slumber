@@ -165,6 +165,39 @@ class AnnotatorTestCase(TestCase):
         self.assertEqual(type(expr), bbast.MethodCall)
         self.assertEqual(expr.deduced_type, 'int')
 
+    def test_module(self):
+        module_0 = bbparser.parse(bbparser.Source('<test>', r"""
+        package bb.lang;
+
+        native class String {
+            int size();
+        }
+
+        class System {
+            static OutStream out;
+        }
+
+        native class OutStream {
+            void println(Object x);
+        }
+
+        """))
+        module_1 = bbparser.parse(bbparser.Source('<test>', r"""
+        package local;
+
+        class Foo {
+            String bar;
+
+            static void main() {
+                System.out.println(5);
+            }
+        }
+        """))
+
+        bbannotator.annotate(
+            module_0.classes +
+            module_1.classes)
+
 
 
 if __name__ == '__main__':
