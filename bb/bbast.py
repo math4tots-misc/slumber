@@ -190,12 +190,12 @@ class Null(Expression):
         return visitor.visit_null(self)
 
 
-class True(Expression):
+class TrueExpression(Expression):
     def accept(self, visitor):
         return visitor.visit_true(self)
 
 
-class False(Expression):
+class FalseExpression(Expression):
     def accept(self, visitor):
         return visitor.visit_false(self)
 

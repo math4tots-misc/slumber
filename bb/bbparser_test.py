@@ -200,12 +200,12 @@ class ExpressionTestCase(TestCase):
     def test_true(self):
         parser = bbparser.Parser(bbparser.Source('<test>', 'true'))
         ast = parser.parse_expression()
-        self.assertEqual(type(ast), bbast.True)
+        self.assertEqual(type(ast), bbast.TrueExpression)
 
     def test_false(self):
         parser = bbparser.Parser(bbparser.Source('<test>', 'false'))
         ast = parser.parse_expression()
-        self.assertEqual(type(ast), bbast.False)
+        self.assertEqual(type(ast), bbast.FalseExpression)
 
     def test_this(self):
         parser = bbparser.Parser(bbparser.Source('<test>', 'this'))

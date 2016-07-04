@@ -285,10 +285,10 @@ class Parser(object):
             return bbast.Null(token)
 
         if self.consume('true'):
-            return bbast.True(token)
+            return bbast.TrueExpression(token)
 
         if self.consume('false'):
-            return bbast.False(token)
+            return bbast.FalseExpression(token)
 
         if self.consume('NAME'):
             name = token.value
