@@ -270,8 +270,6 @@ class Parser(object):
                 break
         return expr
 
-
-
     def parse_primary_expression(self):
         token = self.peek()
 
