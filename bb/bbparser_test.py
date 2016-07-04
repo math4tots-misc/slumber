@@ -12,7 +12,7 @@ class TestCase(unittest.TestCase):
 class EmptyTestCase(TestCase):
     def test(self):
         source = bbparser.Source('<test>', '')
-        with self.assertRaises(bbparser.ParseError):
+        with self.assertRaises(bbparser.CompileError):
             bbparser.parse(source)
 
 
@@ -141,16 +141,16 @@ class ClassWithOneMemberTestCase(TestCase):
 class MemberInInterfaceTestCase(TestCase):
     def test(self):
         TEMPLATE = r"""
-package local;
+        package local;
 
-interface SomeInterface {
-%s
-}
+        interface SomeInterface {
+        %s
+        }
 
-"""
+        """
         # Interfaces are not allowed to have members in them.
         source = bbparser.Source('<test>', TEMPLATE % "  int count;")
-        with self.assertRaises(bbparser.ParseError):
+        with self.assertRaises(bbparser.CompileError):
             bbparser.parse(source)
 
         # Control group
@@ -386,6 +386,71 @@ class NativeClassTestCase(TestCase):
         self.assertEqual(methods[1].name, 'nativeMethod')
         self.assertEqual(methods[1].returns, 'bb.lang.String')
         self.assertEqual(methods[1].args, [])
+
+
+class ClassWithOneMethodTestCase(TestCase):
+    def test(self):
+        ast = bbparser.parse(bbparser.Source('<test>', r"""
+        package local;
+
+        class SomeKlass {
+
+            int count;
+                "Some member comments for count"
+
+            String foo() {
+                "Some method comments for foo";
+
+                System.out.println('hi');
+            }
+
+            void bar() {
+                "Some method comments for bar";
+            }
+        }
+
+        """))
+        self.assertEqual(type(ast), bbast.Module)
+        self.assertEqual(ast.package, 'local')
+        cls = ast.classes[0]
+        self.assertEqual(cls.name, 'SomeKlass')
+        members = cls.members
+        self.assertEqual(len(members), 1, members)
+        member = members[0]
+        self.assertEqual(member.type, 'int')
+        self.assertEqual(member.name, 'count')
+        self.assertEqual(member.doc, "Some member comments for count")
+
+        methods = cls.methods
+        self.assertEqual(len(methods), 2, methods)
+        self.assertEqual(methods[0].name, 'foo')
+        self.assertEqual(methods[0].returns, 'bb.lang.String')
+        self.assertEqual(methods[0].args, [])
+        self.assertEqual(methods[0].doc, "Some method comments for foo")
+        self.assertEqual(methods[1].name, 'bar')
+        self.assertEqual(methods[1].returns, 'void')
+        self.assertEqual(methods[1].args, [])
+        self.assertEqual(methods[1].doc, "Some method comments for bar")
+
+
+class EmptyDocInMethodTestCase(TestCase):
+    def test(self):
+        ast = bbparser.parse(bbparser.Source('<test>', r"""
+        package local;
+
+        class Klass {
+            void f() {}
+        }
+
+        """))
+        self.assertEqual(type(ast), bbast.Module)
+        self.assertEqual(ast.package, 'local')
+        cls = ast.classes[0]
+        self.assertEqual(cls.name, 'Klass')
+        self.assertFalse(cls.is_native)
+        self.assertFalse(cls.is_interface)
+        self.assertEqual(cls.doc, None)
+        self.assertEqual(cls.methods[0].doc, None)
 
 
 if __name__ == '__main__':

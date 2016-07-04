@@ -1,1 +1,5 @@
-for t in *_test.py; do python $t -v || break; done;
+python bblexer_test.py || exit 1
+python bbparser_test.py || exit 1
+python bbannotator_test.py || exit 1
+
+

@@ -11,7 +11,7 @@ OPEN_CURLEY = '{'
 CLOSE_CURLEY = '}'
 
 Source = bblexer.Source
-ParseError = bblexer.ParseError
+CompileError = bblexer.CompileError
 
 PRIMITIVE_TYPES = bblexer.PRIMITIVE_TYPES
 BUILTIN_TYPES = {
@@ -48,7 +48,7 @@ class Parser(object):
 
     def expect(self, type_):
         if not self.at(type_):
-            raise ParseError(
+            raise CompileError(
                 self.peek(),
                 "Expected %s but found %s" % (type_, self.peek()))
         return self.next_token()
@@ -128,7 +128,7 @@ class Parser(object):
             base = 'bb.lang.Object'
 
         if is_native and base != 'bb.lang.Object':
-            raise ParseError(
+            raise CompileError(
                 token,
                 "A native class must inherit from bb.lang.Object, but "
                 "you tried to inherit from " + base)
@@ -154,7 +154,7 @@ class Parser(object):
 
             if self.consume('static'):
                 if is_interface:
-                    raise ParseError(
+                    raise CompileError(
                         member_token,
                         "Interfaces cannot have static methods")
                 is_static = True
@@ -164,13 +164,13 @@ class Parser(object):
             member_name = self.expect('NAME').value
             if self.consume(';'):
                 if is_interface:
-                    raise ParseError(
+                    raise CompileError(
                         member_token,
                         "Member declarations are not allowed inside "
                         "interfaces")
 
                 if is_native:
-                    raise ParseError(
+                    raise CompileError(
                         member_token,
                         "Native classes are not allowed to declare members");
 
@@ -194,7 +194,7 @@ class Parser(object):
 
                 if self.consume(';'):
                     if not (is_native or is_interface):
-                        raise ParseError(
+                        raise CompileError(
                             member_token,
                             'Abstract methods are not supported')
                     if self.at('STRING'):
@@ -204,12 +204,12 @@ class Parser(object):
                     body = None
                 else:
                     if is_interface:
-                        raise ParseError(
+                        raise CompileError(
                             member_token,
                             'Interface method implementations are not yet '
                             'supported')
                     if is_native:
-                        raise ParseError(
+                        raise CompileError(
                             member_token,
                             'Native classes cannot define method '
                             'implementations')
@@ -226,6 +226,7 @@ class Parser(object):
                         body = bbast.Block(body_token, stmts)
                     else:
                         body = self.parse_block()
+                        member_doc = None
 
                 methods.append(bbast.Method(
                     token=member_token, doc=member_doc, is_static=is_static,
@@ -350,7 +351,7 @@ class Parser(object):
                 else:
                     return bbast.GetStaticAttribute(token, type_, name)
 
-        raise ParseError(token, 'Expected expression but got %r' % token)
+        raise CompileError(token, 'Expected expression but got %r' % token)
 
 
 def parse(source):

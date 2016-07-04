@@ -54,9 +54,9 @@ class Token(object):
         return 'Token(type_=%r, value=%r)' % (self.type, self.value)
 
 
-class ParseError(Exception):
+class CompileError(Exception):
     def __init__(self, token, message):
-        super(ParseError, self).__init__(message)
+        super(CompileError, self).__init__(message)
         self.token = token
         self.message = message
 
@@ -128,7 +128,7 @@ class Lexer(object):
 
             while not self.text.startswith(quote, self.pos):
                 if self.pos >= len(self.text):
-                    raise ParseError(
+                    raise CompileError(
                         Token(self.source, start, 'ERROR'),
                         'Unterminated string literal')
 
@@ -136,7 +136,7 @@ class Lexer(object):
                     self.pos += 1
                     ch = self.text[self.pos]
                     if ch not in ESCAPE_TABLE:
-                        raise ParseError(
+                        raise CompileError(
                             Token(self.source, self.pos, 'ERROR'),
                             'Invalid escape: ' + ch)
                     chars.append(ESCAPE_TABLE[ch])
@@ -176,7 +176,7 @@ class Lexer(object):
         while (self.pos < len(self.text) and
                not self.text[self.pos].isspace()):
             self.pos += 1
-        raise ParseError(Token(self.source, start, 'ERROR'),
+        raise CompileError(Token(self.source, start, 'ERROR'),
             'Invalid token: ' + self.text[start:self.pos])
 
 
