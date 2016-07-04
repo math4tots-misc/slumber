@@ -380,14 +380,12 @@ class NativeClassTestCase(TestCase):
 
         methods = cls.methods
         self.assertEqual(len(methods), 2, methods)
-        self.assertEqual(methods[0].name, 'foo')
-        self.assertEqual(methods[0].returns, 'bb.lang.String')
+        self.assertEqual(methods[0].name, 'staticNativeMethod')
+        self.assertEqual(methods[0].returns, 'int')
         self.assertEqual(methods[0].args, [])
-        self.assertEqual(methods[0].doc, "Some method comments for foo")
-        self.assertEqual(methods[1].name, 'bar')
-        self.assertEqual(methods[1].returns, 'void')
+        self.assertEqual(methods[1].name, 'nativeMethod')
+        self.assertEqual(methods[1].returns, 'bb.lang.String')
         self.assertEqual(methods[1].args, [])
-        self.assertEqual(methods[1].doc, "Some method comments for bar")
 
 
 if __name__ == '__main__':
