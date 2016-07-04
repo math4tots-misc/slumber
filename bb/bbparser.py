@@ -109,6 +109,11 @@ class Parser(object):
     def parse_class(self):
         token = self.peek()
 
+        if self.consume('native'):
+            is_native = True
+        else:
+            is_native = False
+
         if self.consume('interface'):
             is_interface = True
         else:
@@ -120,7 +125,13 @@ class Parser(object):
         if self.consume('extends'):
             base = self.parse_typename()
         else:
-            base = None
+            base = 'bb.lang.Object'
+
+        if is_native and base != 'bb.lang.Object':
+            raise ParseError(
+                token,
+                "A native class must inherit from bb.lang.Object, but "
+                "you tried to inherit from " + base)
 
         interfaces = []
         if self.consume('implements'):
@@ -142,6 +153,10 @@ class Parser(object):
             member_token = self.peek()
 
             if self.consume('static'):
+                if is_interface:
+                    raise ParseError(
+                        member_token,
+                        "Interfaces cannot have static methods")
                 is_static = True
             else:
                 is_static = False
@@ -153,6 +168,11 @@ class Parser(object):
                         member_token,
                         "Member declarations are not allowed inside "
                         "interfaces")
+
+                if is_native:
+                    raise ParseError(
+                        member_token,
+                        "Native classes are not allowed to declare members");
 
                 if self.at('STRING'):
                     member_doc = self.expect('STRING').value
@@ -173,7 +193,7 @@ class Parser(object):
                         self.expect(',')
 
                 if self.consume(';'):
-                    if not is_interface:
+                    if not (is_native or is_interface):
                         raise ParseError(
                             member_token,
                             'Abstract methods are not supported')
@@ -188,6 +208,11 @@ class Parser(object):
                             member_token,
                             'Interface method implementations are not yet '
                             'supported')
+                    if is_native:
+                        raise ParseError(
+                            member_token,
+                            'Native classes cannot define method '
+                            'implementations')
 
                     if (self.pos + 2 < len(self.tokens) and
                             self.tokens[self.pos + 1].type == 'STRING' and
@@ -208,7 +233,8 @@ class Parser(object):
                     args=args, body=body))
 
         return bbast.Class(
-            token=token, doc=doc, is_interface=is_interface,
+            token=token, doc=doc,
+            is_native=is_native, is_interface=is_interface,
             package=self.package, name=class_name,
             base=base, interfaces=interfaces,
             members=members, methods=methods)

@@ -26,13 +26,13 @@ class OnlyPackageTestCase(TestCase):
 class ModuleDocTestCase(TestCase):
     def test(self):
         parser = bbparser.Parser(bbparser.Source('<test>', r"""
-'some module docs'
-package local.sample;
+        'some module docs'
+        package local.sample;
 
-import java.util.HashMap;
-import java.util.ArrayList as List;
+        import java.util.HashMap;
+        import java.util.ArrayList as List;
 
-"""))
+        """))
         ast = parser.parse_module()
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.doc, "some module docs")
@@ -41,12 +41,12 @@ import java.util.ArrayList as List;
 class ImportTestCase(TestCase):
     def test(self):
         parser = bbparser.Parser(bbparser.Source('<test>', r"""
-package local.sample;
+        package local.sample;
 
-import java.util.HashMap;
-import java.util.ArrayList as List;
+        import java.util.HashMap;
+        import java.util.ArrayList as List;
 
-"""))
+        """))
         ast = parser.parse_module()
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.package, 'local.sample')
@@ -63,13 +63,13 @@ import java.util.ArrayList as List;
 class EmptyClassTestCase(TestCase):
     def test(self):
         ast = bbparser.parse(bbparser.Source('<test>', r"""
-package local;
+        package local;
 
-class Klass {
-    "some docs for Klass"
-}
+        class Klass {
+            "some docs for Klass"
+        }
 
-"""))
+        """))
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.package, 'local')
         self.assertEqual(ast.imports, [])
@@ -83,16 +83,16 @@ class Klass {
 class ClassMetaDataTestCase(TestCase):
     def test(self):
         ast = bbparser.parse(bbparser.Source('<test>', r"""
-package local;
+        package local;
 
-import java.util.Interface2;
-import java.util.Interface3 as If3;
+        import java.util.Interface2;
+        import java.util.Interface3 as If3;
 
-class Klass extends BaseKlass implements Interface1, Interface2, If3 {
-    "some docs for Klass"
-}
+        class Klass extends BaseKlass implements Interface1, Interface2, If3 {
+            "some docs for Klass"
+        }
 
-"""))
+        """))
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.package, 'local')
         self.assertEqual(ast.imports, [
@@ -115,16 +115,16 @@ class Klass extends BaseKlass implements Interface1, Interface2, If3 {
 class ClassWithOneMemberTestCase(TestCase):
     def test(self):
         ast = bbparser.parse(bbparser.Source('<test>', r"""
-package local;
+        package local;
 
-class SomeKlass {
-    "docs for SomeKlass"
+        class SomeKlass {
+            "docs for SomeKlass"
 
-    int count;
-        "Some doc for the count attribute"
-}
+            int count;
+                "Some doc for the count attribute"
+        }
 
-"""))
+        """))
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.package, 'local')
         cls = ast.classes[0]
@@ -143,7 +143,7 @@ class MemberInInterfaceTestCase(TestCase):
         TEMPLATE = r"""
 package local;
 
-interface SomeKlass {
+interface SomeInterface {
 %s
 }
 
@@ -155,20 +155,24 @@ interface SomeKlass {
 
         # Control group
         source = bbparser.Source('<test>', TEMPLATE % "")
-        bbparser.parse(source)
+        ast = bbparser.parse(source)
+        self.assertEqual(len(ast.classes), 1, ast.classes)
+        interface = ast.classes[0]
+        self.assertEqual(interface.name, 'SomeInterface')
+        self.assertTrue(interface.is_interface)
 
 
 class InterfaceWithOneMethodTestCase(TestCase):
     def test(self):
         ast = bbparser.parse(bbparser.Source('<test>', r"""
-package local;
+        package local;
 
-interface SomeKlass {
-    String foo(int a, SomeKlass b);
-        '''Some docs for abstract method foo'''
-}
+        interface SomeKlass {
+            String foo(int a, SomeKlass b);
+                '''Some docs for abstract method foo'''
+        }
 
-"""))
+        """))
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.package, 'local')
         cls = ast.classes[0]
@@ -302,25 +306,25 @@ class ExpressionTestCase(TestCase):
 class ClassWithOneMethodTestCase(TestCase):
     def test(self):
         ast = bbparser.parse(bbparser.Source('<test>', r"""
-package local;
+        package local;
 
-class SomeKlass {
+        class SomeKlass {
 
-    int count;
-        "Some member comments for count"
+            int count;
+                "Some member comments for count"
 
-    String foo() {
-        "Some method comments for foo";
+            String foo() {
+                "Some method comments for foo";
 
-        System.out.println('hi');
-    }
+                System.out.println('hi');
+            }
 
-    void bar() {
-        "Some method comments for bar";
-    }
-}
+            void bar() {
+                "Some method comments for bar";
+            }
+        }
 
-"""))
+        """))
         self.assertEqual(type(ast), bbast.Module)
         self.assertEqual(ast.package, 'local')
         cls = ast.classes[0]
@@ -343,6 +347,47 @@ class SomeKlass {
         self.assertEqual(methods[1].args, [])
         self.assertEqual(methods[1].doc, "Some method comments for bar")
 
+
+class NativeClassTestCase(TestCase):
+    def test(self):
+        ast = bbparser.parse(bbparser.Source('<test>', r"""
+        package local;
+
+        native class NativeKlass {
+            "This is a native class"
+
+            static int staticNativeMethod();
+                '''
+                This is a static native method.
+                Only native classes can declare a static method without
+                defining it.
+                '''
+
+            String nativeMethod();
+        }
+
+        """))
+        self.assertEqual(type(ast), bbast.Module)
+        self.assertEqual(ast.package, 'local')
+        cls = ast.classes[0]
+        self.assertEqual(cls.name, 'NativeKlass')
+        self.assertTrue(cls.is_native)
+        self.assertFalse(cls.is_interface)
+        self.assertEqual(cls.doc, "This is a native class")
+
+        members = cls.members
+        self.assertEqual(len(members), 0, members)
+
+        methods = cls.methods
+        self.assertEqual(len(methods), 2, methods)
+        self.assertEqual(methods[0].name, 'foo')
+        self.assertEqual(methods[0].returns, 'bb.lang.String')
+        self.assertEqual(methods[0].args, [])
+        self.assertEqual(methods[0].doc, "Some method comments for foo")
+        self.assertEqual(methods[1].name, 'bar')
+        self.assertEqual(methods[1].returns, 'void')
+        self.assertEqual(methods[1].args, [])
+        self.assertEqual(methods[1].doc, "Some method comments for bar")
 
 
 if __name__ == '__main__':

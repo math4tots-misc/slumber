@@ -32,9 +32,10 @@ class Module(Ast):
 
 
 class Class(Ast):
-    def __init__(self, token, doc, is_interface, package, name,
+    def __init__(self, token, doc, is_native, is_interface, package, name,
                  base, interfaces, members, methods):
         super(Class, self).__init__(token)
+        self.is_native = is_native  # bool
         self.is_interface = is_interface  # bool
         self.doc = doc  # string|None
         self.package = package  # package-string

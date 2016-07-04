@@ -7,7 +7,7 @@ OPEN_BRACKET = '['
 CLOSE_BRACKET = ']'
 
 KEYWORDS = {
-    'interface', 'class', 'public', 'private', 'static',
+    'native', 'interface', 'class', 'public', 'private', 'static',
     'extends', 'implements',
     'package', 'from', 'import', 'as',
     'while', 'break', 'continue', 'if', 'else', 'return',
