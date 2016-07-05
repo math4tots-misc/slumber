@@ -936,4 +936,12 @@ describe("Parser", function() {
       });
     });
   });
+
+  it("should parse package declaration", function() {
+    var PARSE_OPTS = { start: "Package" };
+    expect(parser.parse("package a.b;", PARSE_OPTS)).to.containSubset({
+      type: "Package",
+      pkg: "a.b",
+    });
+  });
 });
