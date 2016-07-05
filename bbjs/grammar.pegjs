@@ -50,8 +50,133 @@
 // but for testing we want to be able to parse smaller parts
 // of the grammar.
 start
-  = &{ return options.start === 'Expression'; } e:Expression { return e; }
+  = &{ return options.start === 'Typename'; } e:Typename { return e; }
+  / &{ return options.start === 'Expression'; } e:Expression { return e; }
   / &{ return options.start === 'Statement'; } s:Statement { return s; }
+  / &{ return options.start === 'Attribute'; } a:Attribute { return a; }
+  / &{ return options.start === 'Method'; } a:Method { return a; }
+  / &{ return options.start === 'Class'; } a:Class { return a; }
+
+/**
+ * Class
+ */
+
+Class
+  = kind:ClassOrInterfaceOrNative name:RawTypename
+    base:Extends interfaces:Implements
+    docAndAttributesAndMethods:ClassBody {
+      return {
+        type: "Class",
+        name: name,
+        kind: kind,
+        base: base,
+        interfaces: interfaces,
+        doc: docAndAttributesAndMethods[0],
+        attrs: docAndAttributesAndMethods[1],
+        methods: docAndAttributesAndMethods[2],
+      }
+    }
+
+ClassOrInterfaceOrNative
+  = _ ClassToken _ { return "class"; }
+  / _ InterfaceToken _ { return "interface"; }
+  / _ NativeToken _ { return "native"; }
+
+Extends
+  = _ ExtendsToken _ base:Typename { return base; }
+  / _ { return null; }
+
+Implements
+  = _ ImplementsToken interfaces:InterfaceList _ {
+      return interfaces;
+    }
+  / _ { return []; }
+
+InterfaceList
+  = head:Typename tail:("," e:Typename { return e; })* ","? _ {
+      return [head].concat(tail);
+    }
+  / _ { return []; }
+
+
+ClassBody = _ "{" _ docstr:String? _ members:(Attribute/Method)* "}" _ {
+    var i, attrs = [], methods = [], doc = null;
+    if (docstr) {
+      doc = docstr.val;
+    }
+    for (i = 0; i < members.length; i++) {
+      if (members[i].type === 'Attribute') {
+        attrs.push(members[i]);
+      } else if (members[i].type === 'Method') {
+        methods.push(members[i]);
+      } else {
+        throw new Error("Unrecognized member type: " + members[i].type);
+      }
+    }
+    return [doc, attrs, methods];
+  }
+
+StaticOrEmpty
+  = _ StaticToken _ { return true; }
+  / _ { return false; }
+
+/**
+ * Method
+ */
+
+Method
+  = isStatic:StaticOrEmpty returns:Typename _ name:RawName _
+    "(" _ args:ArgumentList _ ")" _ bodyAndDoc:MethodBodyAndDoc _ {
+
+      return {
+        type: "Method",
+        isStatic: isStatic,
+        returns: returns,
+        name: name,
+        args: args,
+        body: bodyAndDoc[0],
+        doc: bodyAndDoc[1],
+      };
+    }
+
+MethodBodyAndDoc
+  = ";" _ docstr:String? _ {
+      var doc;
+      if (docstr) {
+        doc = docstr.val;
+      } else {
+        doc = null;
+      }
+      return [null, doc];
+    }
+  / body:Block {
+      var doc = null;
+      if (body.stmts.length >= 1 &&
+          body.stmts[0].type === "ExpressionStatement" &&
+          body.stmts[0].expr.type === "String") {
+        doc = body.stmts[0].expr.val;
+        body.stmts = body.stmts.slice(1);
+      }
+      return [body, doc];
+    }
+
+
+ArgumentList
+  = head:Argument tail:("," e:Argument { return e; })* ","? _ {
+      return [head].concat(tail);
+    }
+  / _ { return []; }
+
+Argument = _ cls:Typename _ name:RawName _ { return [cls, name]; }
+
+/**
+ * Attribute
+ */
+
+Attribute
+  = _ isStatic:StaticOrEmpty _ cls:Typename _ name:RawName _ ";" _ {
+      return {type: "Attribute", isStatic: isStatic, cls: cls, name: name};
+    }
 
 /**
  * Statement
@@ -280,6 +405,10 @@ Keyword
   / TrueToken
   / FalseToken
   / SuperToken
+  / VoidToken
+  / BoolToken
+  / IntToken
+  / FloatToken
   / NotToken
   / AndToken
   / OrToken
@@ -290,14 +419,21 @@ Keyword
   / IfToken
   / ElseToken
   / ClassToken
+  / InterfaceToken
+  / NativeToken
   / ExtendsToken
   / ImplementsToken
+  / StaticToken
 
 ThisToken = $("this" NameEnd)
 NullToken = $("null" NameEnd)
 TrueToken = $("true" NameEnd)
 FalseToken = $("false" NameEnd)
 SuperToken = $("super" NameEnd)
+VoidToken = $("void" NameEnd)
+BoolToken = $("bool" NameEnd)
+IntToken = $("int" NameEnd)
+FloatToken = $("float" NameEnd)
 NotToken = $("not" NameEnd)
 AndToken = $("and" NameEnd)
 OrToken = $("or" NameEnd)
@@ -308,19 +444,29 @@ WhileToken = $("while" NameEnd)
 IfToken = $("if" NameEnd)
 ElseToken = $("else" NameEnd)
 ClassToken = $("class" NameEnd)
+InterfaceToken = $("interface" NameEnd)
+NativeToken = $("native" NameEnd)
 ExtendsToken = $("extends" NameEnd)
 ImplementsToken = $("implements" NameEnd)
+StaticToken = $("static" NameEnd)
 
 Typename
   = val:RawTypename { return { type: 'Typename', name: val }; }
 
 RawName
-  = !Keyword [a-z_][0-9A-Za-z_]* { return text(); }
-  / [A-Z][0-9A-Z_]+ { return text(); }
+  = $(!Keyword [a-z_][0-9A-Za-z_]* NameEnd)
+  / $([A-Z][0-9A-Z_]+ NameEnd)
 
 RawTypename
-  = [A-Z][0-9A-Za-z_]*[a-z][0-9A-Za-z_]* { return text(); }
-  / [A-Z] { return text(); }
+  = $([A-Z][0-9A-Z_]*[a-z][0-9A-Za-z_]* NameEnd)
+  / $([A-Z] NameEnd)
+  / PrimitiveTypename
+
+PrimitiveTypename
+  = VoidToken
+  / BoolToken
+  / IntToken
+  / FloatToken
 
 Float
   = [0-9]+ "." [0-9]* { return { type: "Float", val: text() }; }

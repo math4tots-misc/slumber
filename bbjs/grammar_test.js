@@ -6,6 +6,30 @@ chai.use(chaiSubset);
 
 
 describe("Parser", function() {
+  describe("when parsing typename", function() {
+    var PARSE_OPTS = {
+      start: 'Typename',
+    };
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should accept 'X' (single captial letter -- Type)", function() {
+      expect(parse("X")).to.containSubset({type: "Typename", name: "X"});
+    });
+    it("should accept 'Xx' (single captial letter -- Type)", function() {
+      expect(parse("Xx")).to.containSubset({type: "Typename", name: "Xx"});
+    });
+    it("should reject 'x' (single captial letter -- Name)", function() {
+      expect(function() { parse("x"); }).to.throw(Error);
+    });
+    it("should reject 'XX' (double captial letter -- Constant)", function() {
+      expect(function() { parse("XX"); }).to.throw(Error);
+    });
+  });
   describe("when parsing expression", function() {
     var PARSE_OPTS = {
       start: 'Expression',
@@ -617,6 +641,268 @@ describe("Parser", function() {
                   type: "Return",
                   expr: {type: "Name", name: "x"},
               },
+          ],
+      });
+    });
+  });
+  describe("when parsing attribute", function() {
+    var PARSE_OPTS = {
+      start: 'Attribute',
+    };
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should parse static attribute", function() {
+      expect(parse("static String x;")).to.containSubset({
+          type: "Attribute",
+          cls: {
+              type: "Typename",
+              name: "String",
+          },
+          name: "x",
+          isStatic: true,
+      });
+    });
+    it("should parse non-static attribute", function() {
+      expect(parse("String x;")).to.containSubset({
+          type: "Attribute",
+          cls: {
+              type: "Typename",
+              name: "String",
+          },
+          name: "x",
+          isStatic: false,
+      });
+    });
+    it("should parse primitive attribute", function() {
+      expect(parse("int x;")).to.containSubset({
+          type: "Attribute",
+          cls: {
+              type: "Typename",
+              name: "int",
+          },
+          name: "x",
+          isStatic: false,
+      });
+    });
+  });
+  describe("when parsing method", function() {
+    var PARSE_OPTS = {
+      start: 'Method',
+    };
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should parse static method with empty body", function() {
+      expect(parse("static int f(String y) {}")).to.containSubset({
+          type: "Method",
+          returns: {
+              type: "Typename",
+              name: "int",
+          },
+          name: "f",
+          args: [
+            [
+              {
+                type: "Typename",
+                name: "String",
+              }, "y",
+            ],
+          ],
+          isStatic: true,
+          body: {
+            type: "Block",
+            stmts: [],
+          },
+      });
+    });
+    it("should parse non-static method with empty body", function() {
+      expect(parse("int f(String y) {}")).to.containSubset({
+          type: "Method",
+          returns: {
+              type: "Typename",
+              name: "int",
+          },
+          name: "f",
+          args: [
+            [
+              {
+                type: "Typename",
+                name: "String",
+              },
+              "y",
+            ],
+          ],
+          isStatic: false,
+          body: {
+            type: "Block",
+            stmts: [],
+          },
+      });
+    });
+    it("should parse method with no body", function() {
+      expect(parse("int f(String y);")).to.containSubset({
+          type: "Method",
+          returns: {
+              type: "Typename",
+              name: "int",
+          },
+          name: "f",
+          args: [
+            [
+              {
+                type: "Typename",
+                name: "String",
+              },
+              "y",
+            ],
+          ],
+          isStatic: false,
+          body: null,
+      });
+    });
+    it("should parse method with no body but with doc", function() {
+      expect(parse("int f(String y); 'fdoc'")).to.containSubset({
+          type: "Method",
+          returns: {
+              type: "Typename",
+              name: "int",
+          },
+          name: "f",
+          doc: 'fdoc',
+          args: [
+            [
+              {
+                type: "Typename",
+                name: "String",
+              },
+              "y",
+            ],
+          ],
+          isStatic: false,
+          body: null,
+      });
+    });
+    it("should parse method with simple body", function() {
+      expect(parse("int f(String y) { return 5; }")).to.containSubset({
+          type: "Method",
+          returns: {
+              type: "Typename",
+              name: "int",
+          },
+          name: "f",
+          args: [
+            [
+              {
+                type: "Typename",
+                name: "String",
+              },
+              "y",
+            ],
+          ],
+          isStatic: false,
+          body: {
+            type: "Block",
+            stmts: [
+              {
+                type: "Return",
+                expr: {type: "Int", val: "5"},
+              }
+            ],
+          },
+      });
+    });
+    it("should parse method with body and doc", function() {
+      var text = "int f(String y) { 'fdoc'; return 5; }";
+      expect(parse(text)).to.containSubset({
+        type: "Method",
+        returns: {
+            type: "Typename",
+            name: "int",
+        },
+        name: "f",
+        doc: 'fdoc',
+        args: [
+          [
+            {
+              type: "Typename",
+              name: "String",
+            },
+            "y",
+          ],
+        ],
+        isStatic: false,
+        body: {
+          type: "Block",
+          stmts: [
+            {
+              type: "Return",
+              expr: {type: "Int", val: "5"},
+            }
+          ],
+        },
+      });
+    });
+  });
+  describe("when parsing class", function() {
+    var PARSE_OPTS = {
+      start: 'Class',
+    };
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should parse empty class", function() {
+      expect(parse("class Klass {}")).to.containSubset({
+          type: "Class",
+          name: "Klass",
+          kind: "class",
+          base: null,
+          interfaces: [],
+          attrs: [],
+          methods: [],
+      });
+    });
+    it("should parse class with docstring", function() {
+      expect(parse("class Klass { 'Klass doc' }")).to.containSubset({
+        type: "Class",
+        name: "Klass",
+        doc: 'Klass doc',
+      });
+    });
+    it("should parse class with one attr and one method", function() {
+      expect(parse("class Klass { int x; void f() {} }")).to.containSubset({
+          type: "Class",
+          name: "Klass",
+          kind: "class",
+          base: null,
+          interfaces: [],
+          attrs: [
+            {
+              type: "Attribute",
+              cls: {type: "Typename", name: "int"},
+              name: "x",
+            },
+          ],
+          methods: [
+            {
+              type: "Method",
+              returns: {type: "Typename", name: "void"},
+              name: "f",
+              args: [],
+              body: {type: "Block", stmts: []},
+            }
           ],
       });
     });
