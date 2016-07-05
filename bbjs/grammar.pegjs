@@ -51,6 +51,48 @@
 // of the grammar.
 start
   = &{ return options.start === 'Expression'; } e:Expression { return e; }
+  / &{ return options.start === 'Statement'; } s:Statement { return s; }
+
+/**
+ * Statement
+ */
+
+Statement
+  = s:StatementWithoutLocData { return addLoc(s, location(), options); }
+
+StatementWithoutLocData
+  = expr:Expression ';' _ {
+      return { type: "ExpressionStatement", expr: expr };
+    }
+  / _ ReturnToken expr:Expression ';' _ {
+      return { type: "Return", expr: expr };
+    }
+  / _ BreakToken _ ';' _ { return {type: "Break"}; }
+  / _ ContinueToken _ ';' _ { return {type: "Continue"}; }
+  / Block
+  / _ WhileToken cond:Expression body:Block {
+      return {type: "While", cond: cond, body: body};
+    }
+  / If
+
+Block
+  = _ "{" ss:Statement* "}" _ {
+      return addLoc({type: "Block", stmts:ss}, location(), options);
+    }
+
+If
+  = _ IfToken cond:Expression body:Block ElseToken _ other:If {
+      return addLoc({type: "If", cond:cond, body:body, other:other},
+                    location(), options);
+    }
+  / _ IfToken cond:Expression body:Block ElseToken _ other:Block {
+      return addLoc({type: "If", cond:cond, body:body, other:other},
+                    location(), options);
+    }
+  / _ IfToken cond:Expression body:Block {
+      return addLoc({type: "If", cond:cond, body:body},
+                    location(), options);
+    }
 
 /**
  * Expression
@@ -63,7 +105,7 @@ ExpressionList
   / _ { return []; }
 
 Expression
-  = _ expr:Conditional _ { return addLoc(expr, location(), options); }
+  = expr:Conditional { return addLoc(expr, location(), options); }
 
 Conditional
   = cond:Or "?" expr:Or ":" other:Conditional {
@@ -186,7 +228,7 @@ PrimaryWithoutSpaces
   = Float
   / Int
   / String
-  / name:RawName _ "=" expr:Expression {
+  / name:RawName _ EQ expr:Expression {
       return { type: 'Assign', name: name, expr: expr };
     }
   / Name
@@ -209,7 +251,7 @@ PrimaryWithoutSpaces
           type: 'StaticMethodCall', owner: owner, name: name, args: args
       };
     }
-  / owner:Typename _ "." _ name:RawName _ "=" expr:Expression {
+  / owner:Typename _ "." _ name:RawName _ EQ expr:Expression {
       return {
           type: 'SetStaticAttribute', owner: owner, name: name, expr: expr
       };
@@ -241,6 +283,12 @@ Keyword
   / NotToken
   / AndToken
   / OrToken
+  / ReturnToken
+  / BreakToken
+  / ContinueToken
+  / WhileToken
+  / IfToken
+  / ElseToken
   / ClassToken
   / ExtendsToken
   / ImplementsToken
@@ -253,6 +301,12 @@ SuperToken = $("super" NameEnd)
 NotToken = $("not" NameEnd)
 AndToken = $("and" NameEnd)
 OrToken = $("or" NameEnd)
+ReturnToken = $("return" NameEnd)
+BreakToken = $("break" NameEnd)
+ContinueToken = $("continue" NameEnd)
+WhileToken = $("while" NameEnd)
+IfToken = $("if" NameEnd)
+ElseToken = $("else" NameEnd)
 ClassToken = $("class" NameEnd)
 ExtendsToken = $("extends" NameEnd)
 ImplementsToken = $("implements" NameEnd)

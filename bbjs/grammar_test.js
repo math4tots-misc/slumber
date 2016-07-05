@@ -516,4 +516,109 @@ describe("Parser", function() {
       });
     });
   });
+
+  describe("when parsing statement", function() {
+    var PARSE_OPTS = {
+      start: 'Statement',
+    };
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should parse simple expression statement", function() {
+      expect(parse("x;")).to.containSubset({
+          type: "ExpressionStatement",
+          expr: {type: "Name", name: "x"},
+      });
+    });
+    it("should parse simple return", function() {
+      expect(parse("return x;")).to.containSubset({
+          type: "Return",
+          expr: {type: "Name", name: "x"},
+      });
+    });
+    it("should parse simple break", function() {
+      expect(parse("break;")).to.containSubset({
+          type: "Break",
+      });
+    });
+    it("should parse simple continue", function() {
+      expect(parse("continue;")).to.containSubset({
+          type: "Continue",
+      });
+    });
+    it("should parse simple while", function() {
+      expect(parse("while true {}")).to.containSubset({
+          type: "While",
+          cond: {type: "True"},
+          body: {
+              type: "Block",
+              stmts: [],
+          }
+      });
+    });
+    it("should parse simple if", function() {
+      expect(parse("if true {}")).to.containSubset({
+          type: "If",
+          cond: {type: "True"},
+          body: {
+              type: "Block",
+              stmts: [],
+          },
+          other: undefined,
+      });
+    });
+    it("should parse simple if-else", function() {
+      expect(parse("if true {} else {}")).to.containSubset({
+          type: "If",
+          cond: {type: "True"},
+          body: {
+              type: "Block",
+              stmts: [],
+          },
+          other: {
+              type: "Block",
+              stmts: [],
+          },
+      });
+    });
+    it("should parse simple if-else-if-else", function() {
+      expect(parse("if true {} else if false {}")).to.containSubset({
+          type: "If",
+          cond: {type: "True"},
+          body: {
+              type: "Block",
+              stmts: [],
+          },
+          other: {
+              type: "If",
+              cond: {type: "False"},
+              body: {
+                  type: "Block",
+                  stmts: [],
+              }
+          },
+      });
+    });
+    it("should parse empty block", function() {
+      expect(parse("{}")).to.containSubset({
+          type: "Block",
+          stmts: [],
+      });
+    });
+    it("should parse non-empty block", function() {
+      expect(parse("{return x;}")).to.containSubset({
+          type: "Block",
+          stmts: [
+              {
+                  type: "Return",
+                  expr: {type: "Name", name: "x"},
+              },
+          ],
+      });
+    });
+  });
 });
