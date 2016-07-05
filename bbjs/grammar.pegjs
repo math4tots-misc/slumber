@@ -58,6 +58,16 @@ start
   / &{ return options.start === 'Class'; } a:Class { return a; }
   / &{ return options.start === 'Import'; } a:Import { return a; }
   / &{ return options.start === 'Package'; } p:Package { return p; }
+  / Module
+
+/**
+ * Module
+ */
+
+Module
+  = _ pkg:Package imports:Import* classes:Class* {
+      return {type: "Module", pkg: pkg, imports: imports, classes: classes};
+    }
 
 /**
  * Package
@@ -66,7 +76,7 @@ start
 PackageName = $(Name ("." Name)*)
 
 Package
-  = _ PackageToken _ pkg:PackageName ";" {
+  = _ PackageToken _ pkg:PackageName _ ";" _ {
       return {type: "Package", pkg: pkg};
     }
 

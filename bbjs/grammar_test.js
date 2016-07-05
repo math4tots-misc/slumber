@@ -944,4 +944,33 @@ describe("Parser", function() {
       pkg: "a.b",
     });
   });
+
+  describe("when parsing module", function() {
+    var PARSE_OPTS = {};
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should parse a simple module with one class", function() {
+      var source = `
+package local;
+
+import java.util.ArrayList;
+
+class Main {
+  static void main() {
+    System.out.println("Hello world!");
+  }
+}
+`
+      expect(parse(source)).to.containSubset({
+        type: "Module",
+        imports: [{type: "Import", name: "ArrayList"}],
+        classes: [{type: "Class", kind: "class", name: "Main"}],
+      });
+    });
+  });
 });
