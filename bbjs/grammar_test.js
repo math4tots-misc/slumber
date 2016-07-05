@@ -907,4 +907,33 @@ describe("Parser", function() {
       });
     });
   });
+
+  describe("when parsing import", function() {
+    var PARSE_OPTS = {
+      start: 'Import',
+    };
+    function parse(string, filename) {
+      var opts = Object.create(PARSE_OPTS);
+      if (filename !== undefined) {
+        opts.filename = filename;
+      }
+      return parser.parse(string, opts);
+    }
+    it("should parse non-aliased import", function() {
+      expect(parse("import a.b.C;")).to.containSubset({
+        type: "Import",
+        pkg: "a.b",
+        name: "C",
+        alias: "C",
+      });
+    });
+    it("should parse aliased import", function() {
+      expect(parse("import a.b.C as D;")).to.containSubset({
+        type: "Import",
+        pkg: "a.b",
+        name: "C",
+        alias: "D",
+      });
+    });
+  });
 });

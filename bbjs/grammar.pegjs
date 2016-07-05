@@ -56,6 +56,24 @@ start
   / &{ return options.start === 'Attribute'; } a:Attribute { return a; }
   / &{ return options.start === 'Method'; } a:Method { return a; }
   / &{ return options.start === 'Class'; } a:Class { return a; }
+  / &{ return options.start === 'Import'; } a:Import { return a; }
+
+/**
+ * Import
+ */
+
+PackageName = $(Name ("." Name)*)
+Import
+  = _ ImportToken _ pkg:PackageName "." name:RawTypename _
+    rawalias:(AsToken _ alias:RawTypename _ { return alias; })? ";" _ {
+      var alias;
+      if (rawalias) {
+        alias = rawalias;
+      } else {
+        alias = name;
+      }
+      return {type: "Import", pkg: pkg, name: name, alias: alias};
+    }
 
 /**
  * Class
@@ -418,6 +436,8 @@ Keyword
   / WhileToken
   / IfToken
   / ElseToken
+  / ImportToken
+  / AsToken
   / ClassToken
   / InterfaceToken
   / NativeToken
@@ -443,6 +463,8 @@ ContinueToken = $("continue" NameEnd)
 WhileToken = $("while" NameEnd)
 IfToken = $("if" NameEnd)
 ElseToken = $("else" NameEnd)
+ImportToken = $("import" NameEnd)
+AsToken = $("as" NameEnd)
 ClassToken = $("class" NameEnd)
 InterfaceToken = $("interface" NameEnd)
 NativeToken = $("native" NameEnd)
