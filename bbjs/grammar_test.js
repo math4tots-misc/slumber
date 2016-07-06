@@ -1,3 +1,5 @@
+/* jshint esversion: 6 */
+
 var chai = require('chai');
 var expect = chai.expect;
 var chaiSubset = require('chai-subset');
@@ -869,6 +871,17 @@ describe("Parser", function() {
       }
       return parser.parse(string, opts);
     }
+    it("should parse empty interface", function() {
+      expect(parse("interface Iface {}")).to.containSubset({
+          type: "Class",
+          name: "Iface",
+          kind: "interface",
+          base: null,
+          interfaces: [],
+          attrs: [],
+          methods: [],
+      });
+    });
     it("should parse empty class", function() {
       expect(parse("class Klass {}")).to.containSubset({
           type: "Class",
@@ -876,6 +889,28 @@ describe("Parser", function() {
           kind: "class",
           base: null,
           interfaces: [],
+          attrs: [],
+          methods: [],
+      });
+    });
+    it("should parse class with extends", function() {
+      expect(parse("class Klass extends Base {}")).to.containSubset({
+          type: "Class",
+          name: "Klass",
+          kind: "class",
+          base: {type: "Typename", name: "Base"},
+          interfaces: [],
+          attrs: [],
+          methods: [],
+      });
+    });
+    it("should parse class with implements", function() {
+      expect(parse("class Klass implements Iface {}")).to.containSubset({
+          type: "Class",
+          name: "Klass",
+          kind: "class",
+          base: null,
+          interfaces: [{type: "Typename", name: "Iface"}],
           attrs: [],
           methods: [],
       });
@@ -962,16 +997,16 @@ describe("Parser", function() {
     }
     it("should parse a simple module with one class", function() {
       var source = `
-package local;
+      package local;
 
-import java.util.ArrayList;
+      import java.util.ArrayList;
 
-class Main {
-  static void main() {
-    System.out.println("Hello world!");
-  }
-}
-`
+      class Main {
+        static void main() {
+          System.out.println("Hello world!");
+        }
+      }
+      `;
       expect(parse(source)).to.containSubset({
         type: "Module",
         imports: [{type: "Import", name: "ArrayList"}],

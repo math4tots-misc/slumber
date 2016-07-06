@@ -132,7 +132,7 @@ Implements
   / _ { return []; }
 
 InterfaceList
-  = head:Typename tail:("," e:Typename { return e; })* ","? _ {
+  = _ head:Typename tail:("," e:Typename { return e; })* ","? _ {
       return [head].concat(tail);
     }
   / _ { return []; }
