@@ -521,17 +521,21 @@ Int
   = [0-9]+ { return { type: "Int", val: text() }; }
 
 String
-  = '"""' chars:$(!('"""')StringCharacter)* '"""' {
-      return { type: "String", val: chars};
+  = '"""' chars:(!('"""')StringCharacter)* '"""' {
+      return { type: "String", val: chars.map(function(uc) {
+        return uc[1]; }).join("") };
     }
-  / '"' chars:$(!('"')StringCharacter)* '"' {
-      return { type: "String", val: chars};
+  / '"' chars:(!('"')StringCharacter)* '"' {
+      return { type: "String", val: chars.map(function(uc) {
+        return uc[1]; }).join("") };
     }
-  / "'''" chars:$(!("'''")StringCharacter)* "'''" {
-      return { type: "String", val: chars};
+  / "'''" chars:(!("'''")StringCharacter)* "'''" {
+      return { type: "String", val: chars.map(function(uc) {
+        return uc[1]; }).join("") };
     }
-  / "'" chars:$(!("'")StringCharacter)* "'" {
-      return { type: "String", val: chars};
+  / "'" chars:(!("'")StringCharacter)* "'" {
+      return { type: "String", val: chars.map(function(uc) {
+        return uc[1]; }).join("") };
     }
 
 StringCharacter

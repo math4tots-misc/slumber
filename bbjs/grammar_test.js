@@ -92,6 +92,12 @@ describe("Parser", function() {
           type: "False",
       });
     });
+    it('should parse string literals with escapes', function() {
+      expect(parse('"\\n"')).to.containSubset({
+        type: "String",
+        val: "\n",
+      });
+    });
     it('should parse <"""> quoted strings', function() {
       var result = parse('"""hi" \n"""');
       expect(result).to.containSubset({
