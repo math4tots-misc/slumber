@@ -26,13 +26,6 @@ var TypeInfo = exports.TypeInfo = (function() {
         typename === 'float');
   }
 
-  function isBuiltin(typename) {
-    return (
-        typename === 'Object' ||
-        typename === 'String' ||
-        typename === 'List');
-  }
-
   function argTypesAreEqual(argtypes1, argtypes2) {
     var i, len;
     if (argtypes1.length !== argtypes2.length) {
@@ -48,34 +41,7 @@ var TypeInfo = exports.TypeInfo = (function() {
 
   function TypeInfo() {
     this.classes = Object.create(null);
-
-    // Variables that should be refreshed per Module.
-    this.packge = null;
-    this.aliases = null;
   }
-
-  TypeInfo.prototype._getPackage = function() {
-    if (!this.package) {
-      throw new Error("getPackage -- package not defined");
-    }
-    return this.package;
-  };
-
-  TypeInfo.prototype._getFullTypename = function(typename) {
-    if (typeof typename !== 'string') {
-      throw new Error("typename must be a string: " + typename);
-    }
-    if (isPrimitive(typename)) {
-      return typename;
-    }
-    if (this.aliases[typename]) {
-      return this.aliases[typename];
-    }
-    if (isBuiltin(typename)) {
-      return 'bb.lang.' + typename;
-    }
-    return this._getPackage() + '.' + typename;
-  };
 
   TypeInfo.prototype.processAllModules = function(modules) {
     var i, key;
@@ -146,26 +112,15 @@ var TypeInfo = exports.TypeInfo = (function() {
 
   TypeInfo.prototype._visitModule = function(node) {
     var i;
-    this.package = node.pkg.pkg;
-    this.aliases = Object.create(null);
-    for (i = 0; i < node.imports.length; i++) {
-      this._visit(node.imports[i]);
-    }
     for (i = 0; i < node.classes.length; i++) {
       this._visit(node.classes[i]);
     }
-    this.package = null;
-    this.aliases = null;
-  };
-
-  TypeInfo.prototype._visitImport = function(node) {
-    this.aliases[node.alias] = node.pkg + '.' + node.name;
   };
 
   TypeInfo.prototype._visitClass = function(node) {
     var i, that = this;
     var klass = Object.create(null);
-    var className = this._getFullTypename(node.name);
+    var className = node.fullName;
     klass.name = className;
     klass.supers = Object.create(null);
     if (node.base === null) {
@@ -173,10 +128,10 @@ var TypeInfo = exports.TypeInfo = (function() {
         klass.supers['bb.lang.Object'] = true;
       }
     } else {
-      klass.supers[this._getFullTypename(node.base.name)] = true;
+      klass.supers[node.base.fullName] = true;
     }
     for (i = 0; i < node.interfaces.length; i++) {
-      klass.supers[this._getFullTypename(node.interfaces[i].name)] = true;
+      klass.supers[node.interfaces[i].fullName] = true;
     }
     klass.staticAttributeTypes = Object.create(null);
     klass.attributeTypes = Object.create(null);
@@ -187,14 +142,14 @@ var TypeInfo = exports.TypeInfo = (function() {
                           "duplicate definition");
         }
         klass.staticAttributeTypes[node.attrs[i].name] =
-            this._getFullTypename(node.attrs[i].cls.name);
+            node.attrs[i].cls.fullName;
       } else {
         if (klass.attributeTypes[node.attrs[i].name]) {
           throw new Error(className + "." + node.attrs[i].name + " has " +
                           "duplicate definition");
         }
         klass.attributeTypes[node.attrs[i].name] =
-            this._getFullTypename(node.attrs[i].cls.name);
+            node.attrs[i].cls.fullName;
       }
     }
     klass.staticMethodReturnType = Object.create(null);
@@ -202,7 +157,7 @@ var TypeInfo = exports.TypeInfo = (function() {
     klass.staticMethodArgTypes = Object.create(null);
     klass.methodArgTypes = Object.create(null);
     function extractTypeFromTypeArgPair(typeArgPair) {
-      return that._getFullTypename(typeArgPair[0].name);
+      return typeArgPair[0].fullName;
     }
     for (i = 0; i < node.methods.length; i++) {
       if (node.methods[i].isStatic) {
@@ -211,7 +166,7 @@ var TypeInfo = exports.TypeInfo = (function() {
                           "duplicate definition");
         }
         klass.staticMethodReturnType[node.methods[i].name] =
-            this._getFullTypename(node.methods[i].returns.name);
+            node.methods[i].returns.fullName;
         klass.staticMethodArgTypes[node.methods[i].name] =
             node.methods[i].args.map(extractTypeFromTypeArgPair);
       } else {
@@ -220,7 +175,7 @@ var TypeInfo = exports.TypeInfo = (function() {
                           "duplicate definition");
         }
         klass.methodReturnType[node.methods[i].name] =
-            this._getFullTypename(node.methods[i].returns.name);
+            node.methods[i].returns.fullName;
         klass.methodArgTypes[node.methods[i].name] =
             node.methods[i].args.map(extractTypeFromTypeArgPair);
       }

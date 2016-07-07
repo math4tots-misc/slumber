@@ -11,6 +11,7 @@ describe("Parser", function() {
   describe("when parsing typename", function() {
     var PARSE_OPTS = {
       start: 'Typename',
+      package: 'localpkg',
     };
     function parse(string, filename) {
       var opts = Object.create(PARSE_OPTS);
@@ -20,10 +21,16 @@ describe("Parser", function() {
       return parser.parse(string, opts);
     }
     it("should accept 'X' (single captial letter -- Type)", function() {
-      expect(parse("X")).to.containSubset({type: "Typename", name: "X"});
+      expect(parse("X")).to.containSubset({
+        type: "Typename", name: "X",
+        fullName: 'localpkg.X',
+      });
     });
     it("should accept 'Xx' (single captial letter -- Type)", function() {
-      expect(parse("Xx")).to.containSubset({type: "Typename", name: "Xx"});
+      expect(parse("Xx")).to.containSubset({
+        type: "Typename", name: "Xx",
+        fullName: 'localpkg.Xx',
+      });
     });
     it("should reject 'x' (single captial letter -- Name)", function() {
       expect(function() { parse("x"); }).to.throw(Error);
@@ -863,6 +870,7 @@ describe("Parser", function() {
   describe("when parsing class", function() {
     var PARSE_OPTS = {
       start: 'Class',
+      package: 'classpkg.one',
     };
     function parse(string, filename) {
       var opts = Object.create(PARSE_OPTS);
@@ -875,6 +883,7 @@ describe("Parser", function() {
       expect(parse("interface Iface {}")).to.containSubset({
           type: "Class",
           name: "Iface",
+          fullName: 'classpkg.one.Iface',
           kind: "interface",
           base: null,
           interfaces: [],
@@ -886,6 +895,7 @@ describe("Parser", function() {
       expect(parse("class Klass {}")).to.containSubset({
           type: "Class",
           name: "Klass",
+          fullName: 'classpkg.one.Klass',
           kind: "class",
           base: null,
           interfaces: [],
@@ -897,8 +907,12 @@ describe("Parser", function() {
       expect(parse("class Klass extends Base {}")).to.containSubset({
           type: "Class",
           name: "Klass",
+          fullName: "classpkg.one.Klass",
           kind: "class",
-          base: {type: "Typename", name: "Base"},
+          base: {
+            type: "Typename", name: "Base",
+            fullName:"classpkg.one.Base",
+          },
           interfaces: [],
           attrs: [],
           methods: [],
@@ -908,6 +922,7 @@ describe("Parser", function() {
       expect(parse("class Klass implements Iface {}")).to.containSubset({
           type: "Class",
           name: "Klass",
+          fullName: "classpkg.one.Klass",
           kind: "class",
           base: null,
           interfaces: [{type: "Typename", name: "Iface"}],
@@ -919,6 +934,7 @@ describe("Parser", function() {
       expect(parse("class Klass { 'Klass doc' }")).to.containSubset({
         type: "Class",
         name: "Klass",
+        fullName: "classpkg.one.Klass",
         doc: 'Klass doc',
       });
     });
@@ -926,6 +942,7 @@ describe("Parser", function() {
       expect(parse("class Klass { int x; void f() {} }")).to.containSubset({
           type: "Class",
           name: "Klass",
+          fullName: "classpkg.one.Klass",
           kind: "class",
           base: null,
           interfaces: [],
@@ -1012,7 +1029,20 @@ describe("Parser", function() {
       expect(parse(source)).to.containSubset({
         type: "Module",
         imports: [{type: "Import", name: "ArrayList"}],
-        classes: [{type: "Class", kind: "class", name: "Main"}],
+        classes: [{
+          type: "Class", kind: "class", name: "Main",
+          fullName: 'local.Main',
+          methods: [{
+            type: "Method",
+            name: "main",
+            isStatic: true,
+            returns: {
+              type: "Typename",
+              name: 'void',
+              fullName: 'void',
+            }
+          }],
+        }],
       });
     });
   });

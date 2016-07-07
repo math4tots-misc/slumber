@@ -1,4 +1,31 @@
 {
+  function isPrimitive(typename) {
+    return (
+        typename === 'void' ||
+        typename === 'bool' ||
+        typename === 'int' ||
+        typename === 'float');
+  }
+
+  function isBuiltin(typename) {
+    return (
+        typename === 'Object' ||
+        typename === 'String' ||
+        typename === 'List');
+  }
+
+  function getFullTypename(name, options) {
+    if (isPrimitive(name)) {
+      return name;
+    } else if (isBuiltin(name)) {
+      return 'bb.lang.' + name;
+    } else if (options.aliases && options.aliases[name]) {
+      return options.aliases[name];
+    } else {
+      return options.package + '.' + name;
+    }
+  }
+
   function makeLoc(rawLoc, opts) {
     return {
       filename: opts.filename,
@@ -77,6 +104,7 @@ PackageName = $(Name ("." Name)*)
 
 Package
   = _ PackageToken _ pkg:PackageName _ ";" _ {
+      options.package = pkg;
       return {type: "Package", pkg: pkg};
     }
 
@@ -87,12 +115,16 @@ Package
 Import
   = _ ImportToken _ pkg:PackageName "." name:RawTypename _
     rawalias:(AsToken _ alias:RawTypename _ { return alias; })? ";" _ {
+      if (!options.aliases) {
+        options.aliases = Object.create(null);
+      }
       var alias;
       if (rawalias) {
         alias = rawalias;
       } else {
         alias = name;
       }
+      options.aliases[alias] = pkg + '.' + name;
       return {type: "Import", pkg: pkg, name: name, alias: alias};
     }
 
@@ -113,6 +145,7 @@ Class
         doc: docAndAttributesAndMethods[0],
         attrs: docAndAttributesAndMethods[1],
         methods: docAndAttributesAndMethods[2],
+        fullName: options.package + '.' + name,
       }
     }
 
@@ -496,7 +529,12 @@ ImplementsToken = $("implements" NameEnd)
 StaticToken = $("static" NameEnd)
 
 Typename
-  = val:RawTypename { return { type: 'Typename', name: val }; }
+  = val:RawTypename {
+      return {
+        type: 'Typename', name: val,
+        fullName: getFullTypename(val, options),
+      };
+    }
 
 RawName
   = $(!Keyword [a-z_][0-9A-Za-z_]* NameEnd)

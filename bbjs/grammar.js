@@ -56,16 +56,21 @@ module.exports = (function() {
         peg$c15 = ";",
         peg$c16 = { type: "literal", value: ";", description: "\";\"" },
         peg$c17 = function(pkg) {
+              options.package = pkg;
               return {type: "Package", pkg: pkg};
             },
         peg$c18 = function(pkg, name, alias) { return alias; },
         peg$c19 = function(pkg, name, rawalias) {
+              if (!options.aliases) {
+                options.aliases = Object.create(null);
+              }
               var alias;
               if (rawalias) {
                 alias = rawalias;
               } else {
                 alias = name;
               }
+              options.aliases[alias] = pkg + '.' + name;
               return {type: "Import", pkg: pkg, name: name, alias: alias};
             },
         peg$c20 = function(kind, name, base, interfaces, docAndAttributesAndMethods) {
@@ -78,6 +83,7 @@ module.exports = (function() {
                 doc: docAndAttributesAndMethods[0],
                 attrs: docAndAttributesAndMethods[1],
                 methods: docAndAttributesAndMethods[2],
+                fullName: options.package + '.' + name,
               }
             },
         peg$c21 = function() { return "class"; },
@@ -347,7 +353,12 @@ module.exports = (function() {
         peg$c169 = { type: "literal", value: "implements", description: "\"implements\"" },
         peg$c170 = "static",
         peg$c171 = { type: "literal", value: "static", description: "\"static\"" },
-        peg$c172 = function(val) { return { type: 'Typename', name: val }; },
+        peg$c172 = function(val) {
+              return {
+                type: 'Typename', name: val,
+                fullName: getFullTypename(val, options),
+              };
+            },
         peg$c173 = /^[a-z_]/,
         peg$c174 = { type: "class", value: "[a-z_]", description: "[a-z_]" },
         peg$c175 = /^[A-Z]/,
@@ -6167,6 +6178,33 @@ module.exports = (function() {
       return s0;
     }
 
+
+      function isPrimitive(typename) {
+        return (
+            typename === 'void' ||
+            typename === 'bool' ||
+            typename === 'int' ||
+            typename === 'float');
+      }
+
+      function isBuiltin(typename) {
+        return (
+            typename === 'Object' ||
+            typename === 'String' ||
+            typename === 'List');
+      }
+
+      function getFullTypename(name, options) {
+        if (isPrimitive(name)) {
+          return name;
+        } else if (isBuiltin(name)) {
+          return 'bb.lang.' + name;
+        } else if (options.aliases && options.aliases[name]) {
+          return options.aliases[name];
+        } else {
+          return options.package + '.' + name;
+        }
+      }
 
       function makeLoc(rawLoc, opts) {
         return {
