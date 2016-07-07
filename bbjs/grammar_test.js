@@ -906,7 +906,8 @@ describe("Parser", function() {
     it("should throw when class name is a builtin", function() {
       expect(function() { parse("class String {}"); }).to.throw(Error);
     });
-    it("should not parse class name is a builtin inside bb.lang", function() {
+    it("should parse when class name is a builtin inside bb.lang",
+        function() {
       var OPTS = Object.create(PARSE_OPTS);
       OPTS.package = 'bb.lang';
       expect(parser.parse("class String {}", OPTS)).to.containSubset({
