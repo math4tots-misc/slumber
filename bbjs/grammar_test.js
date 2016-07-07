@@ -567,6 +567,20 @@ describe("Parser", function() {
       }
       return parser.parse(string, opts);
     }
+    it("should parse simple declaration with assignment", function() {
+      expect(parse("int x = 5;")).to.containSubset({
+          type: "Declaration",
+          cls: {type: "Typename", name: "int"},
+          expr: {type: "Int", val: "5"},
+      });
+    });
+    it("should parse simple declaration without assignment", function() {
+      expect(parse("int x;")).to.containSubset({
+          type: "Declaration",
+          cls: {type: "Typename", name: "int"},
+          expr: null,
+      });
+    });
     it("should parse simple expression statement", function() {
       expect(parse("x;")).to.containSubset({
           type: "ExpressionStatement",

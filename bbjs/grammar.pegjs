@@ -279,6 +279,12 @@ StatementWithoutLocData
       return {type: "While", cond: cond, body: body};
     }
   / If
+  / _ cls:Typename _ name:RawName _ '=' expr:Expression ';' _ {
+      return {type: "Declaration", cls: cls, name: name, expr: expr};
+    }
+  / _ cls:Typename _ name:RawName _ ';' _ {
+      return {type: "Declaration", cls: cls, name: name, expr: null};
+    }
 
 Block
   = _ "{" ss:Statement* "}" _ {
