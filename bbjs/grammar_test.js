@@ -903,6 +903,12 @@ describe("Parser", function() {
           methods: [],
       });
     });
+    it("should throw when class name is a builtin", function() {
+      expect(function() { parse("class String {}"); }).to.throw(Error);
+    });
+    it("should throw when class name is a primitive", function() {
+      expect(function() { parse("class int {}"); }).to.throw(Error);
+    });
     it("should parse class with extends", function() {
       expect(parse("class Klass extends Base {}")).to.containSubset({
           type: "Class",

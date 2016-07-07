@@ -10,6 +10,9 @@
   function isBuiltin(typename) {
     return (
         typename === 'Object' ||
+        typename === 'Bool' ||
+        typename === 'Int' ||
+        typename === 'Float' ||
         typename === 'String' ||
         typename === 'List');
   }
@@ -17,10 +20,10 @@
   function getFullTypename(name, options) {
     if (isPrimitive(name)) {
       return name;
-    } else if (isBuiltin(name)) {
-      return 'bb.lang.' + name;
     } else if (options.aliases && options.aliases[name]) {
       return options.aliases[name];
+    } else if (isBuiltin(name)) {
+      return 'bb.lang.' + name;
     } else {
       return options.package + '.' + name;
     }
@@ -136,6 +139,11 @@ Class
   = kind:ClassOrInterfaceOrNative name:RawTypename
     base:Extends interfaces:Implements
     docAndAttributesAndMethods:ClassBody {
+      if (isPrimitive(name) ||
+          options.package !== 'bb.lang' && isBuiltin(name)) {
+        throw new Error(name + " is the name of a primitive or a builtin " +
+                        "and a user defined class cannot have this name.");
+      }
       return {
         type: "Class",
         name: name,
