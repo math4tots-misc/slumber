@@ -577,6 +577,7 @@ class Str extends Expression {
 }
 
 const PRELUDE = `
+"use strict";
 
 function xxprint(x) {
   console.log(x);
