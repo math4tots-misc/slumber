@@ -15,6 +15,12 @@ const KEYWORDS = {
   interface: true,
   extends: true,
   implements: true,
+  return: true,
+
+  // reserved words
+    // potential future primtiive types
+    string: true,
+    list: true,
 };
 
 const ESCAPE_TABLE = {
@@ -54,11 +60,7 @@ function isSpace(ch) {
 }
 
 function isPrimitive(str) {
-  return str === 'void' || str === 'bool' || str === 'real' ||
-         // The following aren't actually primitive types, but I want to
-         // reserve the names in case I change my mind later.
-         str === 'string' || str === 'list'|| str === 'int' ||
-         str === 'float';
+  return str === 'void' || str === 'bool' || str === 'int' || str === 'float';
 }
 
 function isTypename(str) {
@@ -725,7 +727,13 @@ class FuncCall extends Expression {
 }
 
 const PRIMITIVE_METHOD_TABLE = {
-  'real.__add__(real)': ['real', (owner, name, args) => {
+  'int.__add__(int)': ['int', (owner, name, args) => {
+    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
+  }],
+  'float.__add__(float)': ['float', (owner, name, args) => {
+    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
+  }],
+  'int.__add__(float)': ['float', (owner, name, args) => {
     return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
   }],
 };
@@ -806,7 +814,7 @@ class Int extends Expression {
     this.val = val;
   }
   ann(data) {
-    this.exprType = 'real';
+    this.exprType = 'int';
   }
   gen() {
     return this.val.toString();
@@ -819,7 +827,7 @@ class Float extends Expression {
     this.val = val;
   }
   ann(data) {
-    this.exprType = 'real';
+    this.exprType = 'float';
   }
   gen() {
     return this.val.toString();
@@ -919,7 +927,7 @@ native class String extends Object {
 }
 native void print(Object item);
 
-real x;
+int x;
 String y;
 
 void f() {
@@ -930,7 +938,9 @@ void g(Object x) {
   print(x);
 }
 
-class Sample {}
+class Sample {
+  // int len() { return 5; }
+}
 
 void main() {
   f();

@@ -43,7 +43,12 @@ which would import the class 'foo.bar.Baz' aliased as Fbb;
 apologies
 =========
 
-'real' seems like a bad name for 
+'real' seems like a bad name to mean double precision floating point,
+at least pedagogically, but quite frankly, 'num' is kind of annoying
+to type. I was kind of tempted to use 'int', but I felt it would be
+even worse to use 'int' to mean double precision floating point.
+'float' is pretty nice to type, and descriptive, but might be confused
+with single precision floating points. I wanted to keep options open.
 
 
 maybes
@@ -55,8 +60,4 @@ I think it's ok to delay this, since if string literals were actually
 the casting would be seamless.
 
 Should 'list' be a primitive type?
-
-Should I split 'real' back into 'int' and 'float'?
-Originally I had separate 'int' and 'float' primitive types, but I'm not
-sure that that's really all that useful or necessary for most cases.
 
