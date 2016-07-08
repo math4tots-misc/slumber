@@ -40,3 +40,12 @@ or
 
 which would import the class 'foo.bar.Baz' aliased as Fbb;
 
+
+maybes
+======
+
+Should 'string' be a primitive type?
+I think it's ok to delay this, since if string literals were actually
+'string', and we always use it in contexts that require 'String',
+the casting would be seamless.
+
