@@ -9,7 +9,12 @@ class Source {
 }
 
 const KEYWORDS = {
+  package: true,
+  native: true,
   class: true,
+  interface: true,
+  extends: true,
+  implements: true,
 };
 
 const ESCAPE_TABLE = {
@@ -27,6 +32,7 @@ for (const key in ESCAPE_TABLE) {
 
 const SYMBOLS = [
   '{', '}', '(', ')', '[', ']', ';',
+  '.', '=',
   '-', '--',
 ].sort().reverse();
 
@@ -113,6 +119,15 @@ class Lexer {
     while (true) {
       while (isSpace(this._ch())) {
         this._pos++;
+      }
+      if (this._ch() === '/*') {
+        while (!this._startsWith('*/')) {
+          if (this._ch() === '') {
+            throw new Error("Multiline comment wasn't terminated!");
+          }
+          this._pos++;
+        }
+        continue;
       }
       if (this._ch() === '#' || this._startsWith('//')) {
         while (this._ch() !== '' && this._ch() !== '\n') {
@@ -273,10 +288,12 @@ class Parser {
     while (!this.at('EOF')) {
       if (this.at('TYPENAME') && this.at('NAME', 1) && this.at(';', 2)) {
         stmts.push(this.parseGlobalDecl());
-      } else if (this.at('class')) {
+      } else if (this.at('class') || this.at('interface') ||
+                 (this.at('native') && (
+                  this.at('class', 1) || this.at('interface', 1)))) {
         stmts.push(this.parseClassDef());
       } else {
-        stmts.push(this.parseFuncDef());
+        stmts.push(this.parseGlobalFuncDef());
       }
     }
     return new Module(token, stmts);
@@ -288,10 +305,7 @@ class Parser {
     this.expect(';');
     return new GlobalDecl(token, cls, name);
   }
-  parseFuncDef() {
-    const token = this.peek();
-    const ret = this.expect('TYPENAME').val;
-    const name = this.expect('NAME').val;
+  parseArgs() {
     const OPEN = '(';
     const CLOSE = ')';
     this.expect(OPEN);
@@ -304,8 +318,44 @@ class Parser {
         this.expect(',');
       }
     }
+    return args;
+  }
+  parseGlobalFuncDef() {
+    const token = this.peek();
+    const isNative = !!this.consume('native');
+    return this.parseFuncDef(token, isNative);
+  }
+  parseClassDef() {
+    const token = this.peek();
+    const isNative = !!this.consume('native');
+    this.expect('class');
+    const name = this.expect('TYPENAME').val;
+    let base = null;
+    if (this.consume('extends')) {
+      base = this.expect('TYPENAME').val;
+    }
+    this.expect('{');
+    const attrs = [];
+    while (this.at('TYPENAME') && this.at('NAME', 1) && this.at(';', 2)) {
+      const attrtype = this.expect('TYPENAME').val;
+      const attrname = this.expect('NAME').val;
+      this.expect(';');
+      attrs.push([attrtype, attrname]);
+    }
+    const methods = [];
+    while (!this.consume('}')) {
+      methods.push(this.parseFuncDef(this.peek(), isNative));
+    }
+    return new ClassDef(token, isNative, name, base, attrs, methods);
+  }
+  parseFuncDef(token, isNative) {
+    const ret = this.expect('TYPENAME').val;
+    const name = this.expect('NAME').val;
+    const args = this.parseArgs();
     let body = null;
-    if (!this.consume(';')) {
+    if (isNative) {
+      this.expect(';');
+    } else {
       body = this.parseBlock();
     }
     return new FuncDef(token, ret, name, args, body);
@@ -331,7 +381,7 @@ class Parser {
     }
   }
   parseExpression() {
-    return this.parsePrimary();
+    return this.parsePostfix();
   }
   parseExpressionList(open, close) {
     this.expect(open);
@@ -343,6 +393,29 @@ class Parser {
       }
     }
     return exprs;
+  }
+  parsePostfix() {
+    const OPEN = '(';
+    const CLOSE = ')';
+    let expr = this.parsePrimary();
+    while (true) {
+      const token = this.peek();
+      if (this.consume('.')) {
+        const name = this.expect('NAME').val;
+        if (this.at(OPEN)) {
+          const args = this.parseExpressionList(OPEN, CLOSE);
+          expr = new MethodCall(token, expr, name, args);
+        } else if (this.consume('=')) {
+          const result = this.parseExpression();
+          expr = new SetAttr(token, expr, name, result);
+        } else {
+          expr = new GetAttr(token, expr, name);
+        }
+        continue;
+      }
+      break;
+    }
+    return expr;
   }
   parsePrimary() {
     const OPEN = '(';
@@ -358,6 +431,9 @@ class Parser {
       if (this.at(OPEN)) {
         const args = this.parseExpressionList(OPEN, CLOSE);
         return new FuncCall(token, name, args);
+      } else if (this.consume('=')) {
+        const expr = this.parseExpression();
+        return new Assign(token, name, expr);
       } else {
         return new Name(token, name);
       }
@@ -376,6 +452,53 @@ function parse(code, uri) {
 
 function indent(code) {
   return code.replace(/\n/g, '\n  ');
+}
+
+class GrokData {
+  constructor() {
+    this._varstack = new VarStack();
+    this._funcsigs = Object.create(null);
+  }
+  setVarType(name, type) {
+    if (this._varstack.alreadySetLocally(name)) {
+      throw new Error("Redeclaration of variable " + name);
+    }
+    this._varstack.set(name, type);
+  }
+  getVarType(name) {
+    if (!this._varstack.get(name)) {
+      throw new Error("Variable " + name + " has not been declared");
+    }
+    return this._varstack.get(name);
+  }
+  pushVarstack() {
+    this._varstack.push();
+  }
+  popVarstack() {
+    this._varstack.pop();
+  }
+  setFuncsig(name, rettype, argtypes) {
+    if (this._funcsigs[name]) {
+      throw new Error("Redeclaration of function " + name);
+    }
+    this._funcsigs[name] = [rettype, argtypes];
+  }
+  getFuncsig(name) {
+    if (!this._funcsigs[name]) {
+      throw new Error("Function " + name + " not declared");
+    }
+    return this._funcsigs[name];
+  }
+  getRettype(name) {
+    return this.getFuncsig(name)[0];
+  }
+  getArgtypes(name) {
+    return this.getFuncsig(name)[1];
+  }
+  castable(src, dest) {
+    // TODO: Check inheritance tree to see if src can be cast to dest.
+    return src === dest;
+  }
 }
 
 class Ast {
@@ -414,6 +537,9 @@ class VarStack {
   get(name) {
     return this.peek()[name];
   }
+  alreadySetLocally(name) {
+    return Object.hasOwnProperty.apply(this.peek(), [name]);
+  }
 }
 
 class Module extends Ast {
@@ -422,9 +548,6 @@ class Module extends Ast {
     this.stmts = stmts;  // [GlobalDecl|FuncDef|ClassDef]
   }
   grok(data) {
-    data.varstack = new VarStack();
-    data.rettype = Object.create(null);
-    data.argtypes = Object.create(null);
     for (const stmt of this.stmts) {
       stmt.grok(data);
     }
@@ -447,7 +570,7 @@ class GlobalDecl extends Ast {
   }
   grok(data) {}
   ann(data) {
-    data.varstack.set(this.name, this.cls);
+    data.setVarType(this.name, this.cls);
   }
   gen() {
     return '\nlet xx$' + this.name + ' = null;';
@@ -465,18 +588,17 @@ class FuncDef extends Ast {
   getArgtypes() { return this.args.map(arg => arg[0]); }
   getArgnames() { return this.args.map(arg => arg[1]); }
   grok(data) {
-    data.rettype[this.name] = this.ret;
-    data.argtypes[this.name] = this.getArgtypes();
+    data.setFuncsig(this.name, this.ret, this.getArgtypes());
   }
   ann(data) {
-    data.varstack.push();
+    data.pushVarstack();
     for (const [type, arg] of this.args) {
-      data.varstack.set(arg, type);
+      data.setVarType(arg, type);
     }
     if (this.body) {
       this.body.ann(data);
     }
-    data.varstack.pop();
+    data.popVarstack();
   }
   gen() {
     if (this.body) {
@@ -484,26 +606,40 @@ class FuncDef extends Ast {
               '(' + this.getArgnames().join(",") + ')' +
               this.body.gen());
     } else {
-      return '\n/* ' + this.name +
+      return '\n/* (native function) ' + this.name +
              '(' + this.getArgtypes().join(", ") + ') */';
     }
   }
 }
 
 class ClassDef extends Ast {
-  constructor(token, name, base, interfs, attrs, methods) {
+  constructor(token, isNative, name, base, attrs, methods) {
     super(token);
+    this.isNative = isNative;  // bool
     this.name = name;  // string
     this.base = base;  // string
-    this.interfs = interfs;  // [string]
-    this.attrs = attrs;  // [Attr]
-    this.methods = methods;  // [Method]
+    this.attrs = attrs;  // [(type:string, name:string)]
+    this.methods = methods;  // [FuncDef]
+  }
+  grok(data) {
+    for (const method of this.methods) {
+      data.setFuncsig(
+          this.name + '.' + method.name, method.ret, method.getArgtypes());
+    }
+  }
+  ann(data) {
+    for (const method of this.methods) {
+      method.ann(data);
+    }
   }
   gen() {
+    if (this.isNative) {
+      return '\n/* native class ' + this.name + ' */';
+    }
     return ('\nclass xx$' + this.name + ' extends xx$' + this.base +
             ' {' + indent(
                 this.methods.map(method => method.gen()).join("")
-            ) + '}');
+            ) + '\n}');
   }
 }
 
@@ -515,11 +651,11 @@ class Block extends Statement {
     this.stmts = stmts;
   }
   ann(data) {
-    data.varstack.push();
+    data.pushVarstack();
     for (let stmt of this.stmts) {
       stmt.ann(data);
     }
-    data.varstack.pop();
+    data.popVarstack();
   }
   gen() {
     return '\n{' +
@@ -558,11 +694,42 @@ class FuncCall extends Expression {
     for (const arg of this.args) {
       arg.ann(data);
     }
-    this.exprType = data.rettype[this.name];
+    this.exprType = data.getRettype(this.name);
+    const argtypes = data.getArgtypes(this.name);
+
+    if (this.args.length !== argtypes.length) {
+      throw new Error(
+          this.name + " expects " + argtypes.length + " arguments but got " +
+          this.args.length);
+    }
   }
   gen() {
     return '/* ' + this.exprType + ' */ xx$' + this.name + '(' +
            this.args.map(arg => arg.gen()).join(", ") + ')';
+  }
+}
+
+class MethodCall extends Expression {
+  constructor(token, owner, name, args) {
+    super(token);
+    this.owner = owner;
+    this.name = name;
+    this.args = args;
+  }
+  ann(data) {
+    this.owner.ann(data);
+    for (const arg of this.args) {
+      arg.ann(data);
+    }
+    this.exprType = data.getRettype(this.owner.exprType + '.' + this.name);
+  }
+  gen() {
+    if (isPrimitive(this.owner.exprType)) {
+      // Primitive types have special hardcoded rules --
+      throw new Error("Not yet supported");
+    }
+    const args = this.args.map(arg => arg.gen());
+    return this.owner.gen() + '.' + this.name + '(' + args.join(", ") + ')';
   }
 }
 
@@ -579,9 +746,44 @@ class Str extends Expression {
   }
 }
 
+class Name extends Expression {
+  constructor(token, name) {
+    super(token);
+    this.name = name;
+  }
+  ann(data) {
+    this.exprType = data.getVarType(this.name);
+  }
+  gen() {
+    return 'xx$' + this.name;
+  }
+}
+
+class Assign extends Expression {
+  constructor(token, name, expr) {
+    super(token);
+    this.name = name;
+    this.expr = expr;
+  }
+  ann(data) {
+    this.expr.ann(data);
+    this.exprType = data.getVarType(this.name);
+    if (!data.castable(this.expr.exprType, this.exprType)) {
+      console.log(this.expr);
+      throw new Error(
+          "Tried to assign " + this.expr.exprType + " to " +
+          this.exprType);
+    }
+  }
+  gen() {
+    return 'xx$' + this.name + ' = ' + this.expr.gen();
+  }
+}
+
 const PRELUDE = `
 "use strict";
 
+// BEGIN PRELUDE
 function xx$print(x) {
   console.log(x);
 }
@@ -596,22 +798,30 @@ class xx$String {
   inspect() {
     return this.toString();
   }
+  __add__(str) {
+    return new xx$String(this.val + str.val);
+  }
 }
-
+// END PRELUDE
 `;
 
 function transpile(code, uri) {
   const module = parse(code, uri);
-  const data = Object.create(null);
+  const data = new GrokData();
   module.grok(data);
   module.ann(data);
   return PRELUDE + module.gen() + '\n\nxx$main();';
 }
 const code = `
+
+native class Object {}
+native class String extends Object {
+  String __add__(String other);
+}
+native void print(Object item);
+
 int x;
 String y;
-
-void print(Object item);
 
 void f() {
   print("Hello from function f");
@@ -619,6 +829,10 @@ void f() {
 
 void main() {
   f();
+  print("Hello ".__add__("world!"));
+  y = 'hi';
+  print(y);
+  print(y.__add__(' there'));
 }
 
 `;
