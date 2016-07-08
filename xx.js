@@ -238,6 +238,9 @@ class Parser {
   constructor(code, uri) {
     this._tokens = lex(code, uri);
     this._pos = 0;
+
+    // Module level variables
+    this._aliases = Object.create(null);
   }
   peek(df) {
     if (df === undefined) {
@@ -447,7 +450,7 @@ class GlobalDecl extends Ast {
     data.varstack.set(this.name, this.cls);
   }
   gen() {
-    return '\nlet xx' + this.name + ' = null;';
+    return '\nlet xx$' + this.name + ' = null;';
   }
 }
 
@@ -477,7 +480,7 @@ class FuncDef extends Ast {
   }
   gen() {
     if (this.body) {
-      return ('\nfunction xx' + this.name +
+      return ('\nfunction xx$' + this.name +
               '(' + this.getArgnames().join(",") + ')' +
               this.body.gen());
     } else {
@@ -497,7 +500,7 @@ class ClassDef extends Ast {
     this.methods = methods;  // [Method]
   }
   gen() {
-    return ('\nclass xx' + this.name + ' extends xx' + this.base +
+    return ('\nclass xx$' + this.name + ' extends xx$' + this.base +
             ' {' + indent(
                 this.methods.map(method => method.gen()).join("")
             ) + '}');
@@ -558,7 +561,7 @@ class FuncCall extends Expression {
     this.exprType = data.rettype[this.name];
   }
   gen() {
-    return '/* ' + this.exprType + ' */ xx' + this.name + '(' +
+    return '/* ' + this.exprType + ' */ xx$' + this.name + '(' +
            this.args.map(arg => arg.gen()).join(", ") + ')';
   }
 }
@@ -572,18 +575,18 @@ class Str extends Expression {
     this.exprType = 'String';
   }
   gen() {
-    return 'new xxString("' + sanitizeString(this.val) + '")';
+    return 'new xx$String("' + sanitizeString(this.val) + '")';
   }
 }
 
 const PRELUDE = `
 "use strict";
 
-function xxprint(x) {
+function xx$print(x) {
   console.log(x);
 }
 
-class xxString {
+class xx$String {
   constructor(val) {
     this.val = val;
   }
@@ -602,7 +605,7 @@ function transpile(code, uri) {
   const data = Object.create(null);
   module.grok(data);
   module.ann(data);
-  return PRELUDE + module.gen() + '\n\nxxmain();';
+  return PRELUDE + module.gen() + '\n\nxx$main();';
 }
 const code = `
 int x;
