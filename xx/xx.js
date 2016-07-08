@@ -33,7 +33,7 @@ for (const key in ESCAPE_TABLE) {
 const SYMBOLS = [
   '{', '}', '(', ')', '[', ']', ';',
   '.', '=',
-  '-', '--',
+  '+', '++', '-', '--',
 ].sort().reverse();
 
 function sanitizeString(str) {
@@ -54,7 +54,10 @@ function isSpace(ch) {
 }
 
 function isPrimitive(str) {
-  return str === 'void' || str === 'bool' || str === 'int' ||
+  return str === 'void' || str === 'bool' || str === 'real' ||
+         // The following aren't actually primitive types, but I want to
+         // reserve the names in case I change my mind later.
+         str === 'string' || str === 'list'|| str === 'int' ||
          str === 'float';
 }
 
@@ -334,6 +337,9 @@ class Parser {
     if (this.consume('extends')) {
       base = this.expect('TYPENAME').val;
     }
+    if (!isNative && base === null) {
+      base = 'Object';
+    }
     this.expect('{');
     const attrs = [];
     while (this.at('TYPENAME') && this.at('NAME', 1) && this.at(';', 2)) {
@@ -441,6 +447,14 @@ class Parser {
     if (this.consume("STR")) {
       const val = token.val;
       return new Str(token, val);
+    }
+    if (this.consume("INT")) {
+      const val = token.val;
+      return new Int(token, val);
+    }
+    if (this.consume("FLOAT")) {
+      const val = token.val;
+      return new Float(token, val);
     }
     throw new Error("Expected expression but found " + this.peek());
   }
@@ -602,8 +616,9 @@ class FuncDef extends Ast {
   }
   gen() {
     if (this.body) {
-      return ('\nfunction xx$' + this.name +
-              '(' + this.getArgnames().join(",") + ')' +
+      const args = this.args.map(arg => '/*' + arg[0] + '*/ ' + arg[1]);
+      return ('\nfunction /*' + this.ret + '*/ xx$' + this.name +
+              '(' + args.join(",") + ')' +
               this.body.gen());
     } else {
       return '\n/* (native function) ' + this.name +
@@ -704,9 +719,42 @@ class FuncCall extends Expression {
     }
   }
   gen() {
-    return '/* ' + this.exprType + ' */ xx$' + this.name + '(' +
+    return 'xx$' + this.name + '(' +
            this.args.map(arg => arg.gen()).join(", ") + ')';
   }
+}
+
+const PRIMITIVE_METHOD_TABLE = {
+  'real.__add__(real)': ['real', (owner, name, args) => {
+    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
+  }],
+};
+
+function lookupPrimitiveMethodTable(owner, name, args) {
+  const ownerType = owner.exprType;
+  const argtypes = args.map(arg => arg.exprType);
+  const key = ownerType + '.' + name + '(' + argtypes.join(",") + ')';
+  if (!PRIMITIVE_METHOD_TABLE[key]) {
+    throw new Error("No such primitive method with signature " + key);
+  }
+  return PRIMITIVE_METHOD_TABLE[key];
+}
+
+function getPrimitiveMethodType(owner, name, args) {
+  const ownerType = owner.exprType;
+  const argtypes = args.map(arg => arg.exprType);
+  const key = ownerType + '.' + name + '(' + argtypes.join(",") + ')';
+  return lookupPrimitiveMethodTable(owner, name, args)[0];
+}
+
+function genPrimitiveMethod(owner, name, args) {
+  const ownerType = owner.exprType;
+  const argtypes = args.map(arg => arg.exprType);
+  const key = ownerType + '.' + name + '(' + argtypes.join(",") + ')';
+  if (!PRIMITIVE_METHOD_TABLE[key]) {
+    throw new Error("No such primitive method with signature " + key);
+  }
+  return lookupPrimitiveMethodTable(owner, name, args)[1](owner, name, args);
 }
 
 class MethodCall extends Expression {
@@ -721,15 +769,60 @@ class MethodCall extends Expression {
     for (const arg of this.args) {
       arg.ann(data);
     }
-    this.exprType = data.getRettype(this.owner.exprType + '.' + this.name);
+    const name = this.owner.exprType + '.' + this.name;
+    if (isPrimitive(this.owner.exprType)) {
+      // If the method is on a primitive type, we have special hardcoded
+      // rules --
+      this.exprType = getPrimitiveMethodType(
+          this.owner, this.name, this.args);
+      if (!this.exprType) {
+        throw new Error("No primitive method: " + name);
+      }
+    } else {
+      this.exprType = data.getRettype(name);
+      const argtypes = data.getArgtypes(name);
+
+      if (this.args.length !== argtypes.length) {
+        throw new Error(
+            name + " expects " + argtypes.length + " arguments but got " +
+            this.args.length);
+      }
+    }
   }
   gen() {
     if (isPrimitive(this.owner.exprType)) {
       // Primitive types have special hardcoded rules --
-      throw new Error("Not yet supported");
+      return genPrimitiveMethod(this.owner, this.name, this.args);
     }
     const args = this.args.map(arg => arg.gen());
-    return this.owner.gen() + '.' + this.name + '(' + args.join(", ") + ')';
+    return this.owner.gen() + '.xx$' + this.name +
+           '(' + args.join(", ") + ')';
+  }
+}
+
+class Int extends Expression {
+  constructor(token, val) {
+    super(token);
+    this.val = val;
+  }
+  ann(data) {
+    this.exprType = 'real';
+  }
+  gen() {
+    return this.val.toString();
+  }
+}
+
+class Float extends Expression {
+  constructor(token, val) {
+    super(token);
+    this.val = val;
+  }
+  ann(data) {
+    this.exprType = 'real';
+  }
+  gen() {
+    return this.val.toString();
   }
 }
 
@@ -771,8 +864,8 @@ class Assign extends Expression {
     if (!data.castable(this.expr.exprType, this.exprType)) {
       console.log(this.expr);
       throw new Error(
-          "Tried to assign " + this.expr.exprType + " to " +
-          this.exprType);
+          "Tried to assign " + this.expr.exprType + " to a " +
+          this.exprType + " variable");
     }
   }
   gen() {
@@ -780,25 +873,31 @@ class Assign extends Expression {
   }
 }
 
-const PRELUDE = `
+const NATIVE_PRELUDE = `
 "use strict";
 
-// BEGIN PRELUDE
+// BEGIN NATIVE PRELUDE
 function xx$print(x) {
   console.log(x);
 }
 
-class xx$String {
+class xx$Object {}
+
+class PrimitiveWrapperType extends xx$Object {
   constructor(val) {
+    super();
     this.val = val;
   }
   toString() {
-    return this.val;
+    return this.val.toString();
   }
   inspect() {
     return this.toString();
   }
-  __add__(str) {
+}
+
+class xx$String extends PrimitiveWrapperType {
+  xx$__add__(str) {
     return new xx$String(this.val + str.val);
   }
 }
@@ -810,7 +909,7 @@ function transpile(code, uri) {
   const data = new GrokData();
   module.grok(data);
   module.ann(data);
-  return PRELUDE + module.gen() + '\n\nxx$main();';
+  return NATIVE_PRELUDE + module.gen() + '\n\nxx$main();';
 }
 const code = `
 
@@ -820,12 +919,18 @@ native class String extends Object {
 }
 native void print(Object item);
 
-int x;
+real x;
 String y;
 
 void f() {
   print("Hello from function f");
 }
+
+void g(Object x) {
+  print(x);
+}
+
+class Sample {}
 
 void main() {
   f();
@@ -833,6 +938,8 @@ void main() {
   y = 'hi';
   print(y);
   print(y.__add__(' there'));
+  print(1 .__add__(2));
+  print(1 .__add__(2.2));
 }
 
 `;

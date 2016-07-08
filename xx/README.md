@@ -40,6 +40,11 @@ or
 
 which would import the class 'foo.bar.Baz' aliased as Fbb;
 
+apologies
+=========
+
+'real' seems like a bad name for 
+
 
 maybes
 ======
@@ -48,4 +53,10 @@ Should 'string' be a primitive type?
 I think it's ok to delay this, since if string literals were actually
 'string', and we always use it in contexts that require 'String',
 the casting would be seamless.
+
+Should 'list' be a primitive type?
+
+Should I split 'real' back into 'int' and 'float'?
+Originally I had separate 'int' and 'float' primitive types, but I'm not
+sure that that's really all that useful or necessary for most cases.
 
