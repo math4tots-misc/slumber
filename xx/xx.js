@@ -382,6 +382,10 @@ class Parser {
     const CLOSE = '}';
     if (this.at(OPEN)) {
       return this.parseBlock();
+    } if (this.consume('return')) {
+      const expr = this.parseExpression();
+      this.expect(';');
+      return new Return(token, expr);
     } else {
       const expr = this.parseExpression();
       this.expect(';');
@@ -472,8 +476,18 @@ function indent(code) {
 
 class GrokData {
   constructor() {
+    this._currettypestack = [];
     this._varstack = new VarStack();
     this._funcsigs = Object.create(null);
+  }
+  pushCurRettype(type) {
+    this._currettypestack.push(type);
+  }
+  popCurRettype() {
+    this._currettypestack.pop();
+  }
+  getCurRettype() {
+    return this._currettypestack[this._currettypestack.length-1];
   }
   setVarType(name, type) {
     if (this._varstack.alreadySetLocally(name)) {
@@ -608,13 +622,20 @@ class FuncDef extends Ast {
   }
   ann(data) {
     data.pushVarstack();
+    data.pushCurRettype(this.ret);
     for (const [type, arg] of this.args) {
       data.setVarType(arg, type);
     }
     if (this.body) {
       this.body.ann(data);
     }
+    if (this.ret !== 'void' && this.body !== null && !this.body.returns()) {
+      throw new Error(
+          "Function " + this.name + " should return " +
+          this.ret + " but might not return");
+    }
     data.popVarstack();
+    data.popCurRettype();
   }
   gen() {
     if (this.body) {
@@ -640,8 +661,8 @@ class ClassDef extends Ast {
   }
   grok(data) {
     for (const method of this.methods) {
-      data.setFuncsig(
-          this.name + '.' + method.name, method.ret, method.getArgtypes());
+      data.setFuncsig(this.name + '.' + method.name,
+                      method.ret, method.getArgtypes());
     }
   }
   ann(data) {
@@ -653,19 +674,24 @@ class ClassDef extends Ast {
     if (this.isNative) {
       return '\n/* native class ' + this.name + ' */';
     }
+    const methods = this.methods.map(
+        method => method.gen().replace(/\bfunction /, ''));
     return ('\nclass xx$' + this.name + ' extends xx$' + this.base +
-            ' {' + indent(
-                this.methods.map(method => method.gen()).join("")
-            ) + '\n}');
+            ' {' + indent(methods.join("")) + '\n}');
   }
 }
 
-class Statement extends Ast {}
+class Statement extends Ast {
+  returns() { return false; }
+}
 
 class Block extends Statement {
   constructor(token, stmts) {
     super(token);
     this.stmts = stmts;
+  }
+  returns() {
+    return this.stmts.length > 0 && this.stmts[this.stmts.length-1].returns();
   }
   ann(data) {
     data.pushVarstack();
@@ -678,6 +704,25 @@ class Block extends Statement {
     return '\n{' +
            indent(this.stmts.map(stmt => stmt.gen()).join("")) +
            '\n}';
+  }
+}
+
+class Return extends Statement {
+  constructor(token, expr) {
+    super(token);
+    this.expr = expr;
+  }
+  returns() { return true; }
+  ann(data) {
+    this.expr.ann(data);
+    if (!data.castable(this.expr.exprType, data.getCurRettype())) {
+      throw new Error(
+          "Function returns " + data.getCurRettype() + " but tried to " +
+          "return " + this.expr.exprType);
+    }
+  }
+  gen() {
+    return '\nreturn ' + this.expr.gen() + ';';
   }
 }
 
@@ -939,7 +984,7 @@ void g(Object x) {
 }
 
 class Sample {
-  // int len() { return 5; }
+  int len() { return 5; }
 }
 
 void main() {
