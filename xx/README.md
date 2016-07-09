@@ -61,3 +61,5 @@ the casting would be seamless.
 
 Should 'list' be a primitive type?
 
+Should 'int' be returned as a primitive type? Not having it does simplify
+things.

@@ -23,6 +23,7 @@ const KEYWORDS = {
     // potential future primtiive types
     string: true,
     list: true,
+    int: true,
 };
 
 const ESCAPE_TABLE = {
@@ -62,7 +63,7 @@ function isSpace(ch) {
 }
 
 const PRIMITIVE_TABLE = {
-  void: 'Void', bool: 'Bool', int: 'Int', float: 'Float'
+  void: 'Void', bool: 'Bool', float: 'Float'
 };
 
 function isPrimitive(str) {
@@ -555,8 +556,9 @@ class GrokData {
     if (isPrimitive(src) &&
         (isWrapperTypeFor(dest, src) || dest === 'Object')) {
       return 'new ' + getWrapperType(src) + '(' + expr + ')';
-    } else if (isPrimitive())
-    if (src === dest || dest === 'Object') {
+    } else if (isPrimitive(dest) && isWrapperTypeFor(dest, src)) {
+      return expr + '.val';
+    } if (src === dest || dest === 'Object') {
       return expr;
     } else {
       throw new Error(
@@ -806,13 +808,7 @@ class FuncCall extends Expression {
 }
 
 const PRIMITIVE_METHOD_TABLE = {
-  'int.__add__(int)': ['int', (owner, name, args) => {
-    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
-  }],
   'float.__add__(float)': ['float', (owner, name, args) => {
-    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
-  }],
-  'int.__add__(float)': ['float', (owner, name, args) => {
     return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
   }],
 };
@@ -893,7 +889,8 @@ class Int extends Expression {
     this.val = val;
   }
   ann(data) {
-    this.exprType = 'int';
+    // NOTE: There is no 'int' type.
+    this.exprType = 'float';
   }
   gen() {
     return this.val.toString();
@@ -1022,7 +1019,7 @@ native class String extends Object {
 }
 native void print(Object item);
 
-int x;
+float x;
 String y;
 
 void f() {
@@ -1034,7 +1031,7 @@ void g(Object x) {
 }
 
 class Sample {
-  int len() { return 5; }
+  float len() { return 5; }
 }
 
 void main() {
