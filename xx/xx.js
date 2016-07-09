@@ -20,10 +20,11 @@ const KEYWORDS = {
   return: true,
 
   // reserved words
-    // potential future primtiive types
-    string: true,
+    // Just because they are so loaded in other languages
+    goto: true,
+    new: true,
+    // potential future primitive types
     list: true,
-    int: true,
 };
 
 const ESCAPE_TABLE = {
@@ -63,7 +64,7 @@ function isSpace(ch) {
 }
 
 const PRIMITIVE_TABLE = {
-  void: 'Void', bool: 'Bool', float: 'Float'
+  void: 'Void', bool: 'Bool', float: 'Float', int: 'Int', string: 'String',
 };
 
 function isPrimitive(str) {
@@ -351,7 +352,10 @@ class Parser {
   parseClassDef() {
     const token = this.peek();
     const isNative = !!this.consume('native');
-    this.expect('class');
+    const isInterface = !!this.consume('interface');
+    if (!isInterface) {
+      this.expect('class');
+    }
     const name = this.expect('TYPENAME').val;
     let base = null;
     if (this.consume('extends')) {
@@ -359,6 +363,13 @@ class Parser {
     }
     if (!isNative && base === null) {
       base = 'Object';
+    }
+    const interfs = [];
+    if (this.consume('implements')) {
+      interfs.push(this.expect('TYPENAME').val);
+      while (this.consume(',')) {
+        interfs.push(this.expect('TYPENAME').val);
+      }
     }
     this.expect('{');
     const attrs = [];
@@ -372,7 +383,8 @@ class Parser {
     while (!this.consume('}')) {
       methods.push(this.parseFuncDef(this.peek(), isNative));
     }
-    return new ClassDef(token, isNative, name, base, attrs, methods);
+    return new ClassDef(token, isNative, isInterface,
+                        name, base, interfs, attrs, methods);
   }
   parseFuncDef(token, isNative) {
     const ret = this.expect('TYPENAME').val;
@@ -404,6 +416,15 @@ class Parser {
       const expr = this.parseExpression();
       this.expect(';');
       return new Return(token, expr);
+    } else if (this.at('TYPENAME') && this.at('NAME', 1)) {
+      const cls = this.expect('TYPENAME').val;
+      const name = this.expect('NAME').val;
+      let expr = null;
+      if (this.consume('=')) {
+        expr = this.parseExpression();
+      }
+      this.expect(';');
+      return new Decl(token, cls, name, expr);
     } else {
       const expr = this.parseExpression();
       this.expect(';');
@@ -456,6 +477,11 @@ class Parser {
       this.expect(CLOSE);
       return expr;
     }
+    if (this.consume('TYPENAME')) {
+      const typename = token.val;
+      const args = this.parseExpressionList('(', ')');
+      return new New(token, typename, args);
+    }
     if (this.consume('NAME')) {
       const name = token.val;
       if (this.at(OPEN)) {
@@ -494,9 +520,119 @@ function indent(code) {
 
 class GrokData {
   constructor() {
+    // attributes filled during 'grok'
+    this._funcsigs = Object.create(null);
+    this._ancestry = Object.create(null);
+
+    // Helpers during processInheritanceData
+    this._processStarted = Object.create(null);
+    this._processed = Object.create(null);
+
+    // attributes filled/used during 'ann'
     this._currettypestack = [];
     this._varstack = new VarStack();
-    this._funcsigs = Object.create(null);
+  }
+  declareClass(name, base, interfs) {
+    if (this._ancestry[name]) {
+      throw new Error("Class " + name + " redeclared");
+    }
+    this._ancestry[name] = Object.create(null);
+    this._ancestry[name][base] = true;
+    for (const interf of interfs) {
+      this._ancestry[name][interf] = true;
+    }
+  }
+  processInheritanceData() {
+    // Must be called after grok finishes but before ann starts.
+    for (const className in this._ancestry) {
+      this._process(className);
+    }
+  }
+  _process(className) {
+    if (className === null || this._processed[className]) {
+      return;
+    }
+    if (this._processStarted[className]) {
+      throw new Error("Infinite recursion in inheritance with " + className);
+    }
+    this._processStarted[className] = true;
+    for (const baseName in this._ancestry[className]) {
+      this._process(baseName);
+    }
+    for (const baseName of Object.keys(this._ancestry[className])) {
+      this._ancestry[className][baseName] = true;
+    }
+
+  }
+  _mergeMethodSignaturesWithAncestors(className) {
+    // NOTE: This is probably very bad for very large number of classes and
+    // functions (probably say 5000+ classes and functions)
+    // Not an issue right now.
+    const directMethods = Object.create(null);
+    for (const funcName in this._funcsigs) {
+      const [baseName, methodName] = funcName.split(".");
+      if (baseName === className) {
+        directMethods[methodName] = true;
+      }
+    }
+    for (const funcName of Object.keys(this._funcsigs)) {
+      const [baseName, methodName] = funcName.split(".");
+      if (this.isSubclass(className, baseName)) {
+        const key = className + '.' + methodName;
+        if (!this._funcsigs[key]) {
+          // We don't have a direct method, and we simply inherit from
+          // our base.
+          const [ret, args] = this._funcsigs[funcName];
+          this._funcsigs[key] = [ret, Array.from(args)];
+        } else if (!directMethods[methodName]) {
+          // In this case, 'methodName' is not a direct method.
+          // This means that the current values filled in at _funcsigs
+          // are from another base. Assume that they are correct (
+          // we will check for consistencies when we are processing the
+          // classes for which they are direct methods).
+          const aret = this._funcsigs[key][0];
+          const aargs = this._funcsigs[key][1];
+          const bret = this._funcsigs[funcName][0];
+          const bargs = this._funcsigs[funcName][1];
+          this._funcsigs[key][0] = this.isSubclass(aret, bret) ? aret : bret;
+          const len = aargs.length;
+          for (let i = 0; i < len; i++) {
+            this._funcsigs[key][1][i] =
+                this.isSubclass(aargs[i], bargs[i]) ? bargs[i] : aargs[i];
+          }
+        } else {
+          // We have a direct method with same name as a base class.
+          // We don't need to assign anything new to _funcsigs, but
+          // we want to validate that this is legitimate.
+          // The subclass must have a 'at least as specific' return type,
+          // and must accept 'at least as broad' argument types
+          // Also, argument length must be the same.
+          const [baseRet, baseArgs] = this._funcsigs[funcName];
+          const [ret, args] = this._funcsigs[key];
+          if (args.length !== baseArgs.length) {
+            throw new Error(
+                key + " accepts " + args.length + " args but " +
+                funcName + " accepts " + baseArgs.length);
+          }
+          if (!self.isSubclass(ret, baseRet)) {
+            throw new Error(
+                key + " returns " + ret + " args but " +
+                funcName + " returns " + baseRet);
+          }
+          for (let i = 0; i < args.length; i++) {
+            if (!self.isSubclass(baseArgs[i], args[i])) {
+              throw new Error(
+                  key + " accepts " + args[i] + " for arg " + i + " but " +
+                  funcName + " accepts " + baseArgs[i] + " for arg " + i);
+            }
+          }
+        }
+      }
+    }
+    this._processed[className] = true;
+  }
+  isSubclass(subclass, baseclass) {
+    return subclass === baseclass || !!this._ancestry[subclass][baseclass];
   }
   pushCurRettype(type) {
     this._currettypestack.push(type);
@@ -549,20 +685,29 @@ class GrokData {
            dest === 'Object' ||
            src === 'Object' ||
            isWrapperTypeFor(src, dest) ||
-           isWrapperTypeFor(des, src);
+           isWrapperTypeFor(dest, src);
   }
   cast(expr, src, dest) {
-    // TODO: See castable
-    if (isPrimitive(src) &&
-        (isWrapperTypeFor(dest, src) || dest === 'Object')) {
-      return 'new ' + getWrapperType(src) + '(' + expr + ')';
-    } else if (isPrimitive(dest) && isWrapperTypeFor(dest, src)) {
-      return expr + '.val';
-    } if (src === dest || dest === 'Object') {
+    if (src === dest) {
+      return expr;
+    } else if (isPrimitive(src)) {
+      if (isWrapperTypeFor(dest, src) || dest === 'Object') {
+        return 'new xx$' + getWrapperType(src) + '(' + expr + ')';
+      } else {
+        throw new Error("Cannot cast from " + src + " to " + dest);
+      }
+    } else if (isPrimitive(dest)) {
+      if (isWrapperTypeFor(src, dest)) {
+        return expr + '.val';
+      } else if (src === 'Object') {
+        return 'yy$downcast(' + expr + ', xx$' +
+               getWrapperType(dest) +  ').val';
+      }
+    } if (dest === 'Object') {
       return expr;
     } else {
-      throw new Error(
-          "Casting from " + src + " to " + dest + " is not yet supported");
+      // TODO: Omit cast if src is a subclass of dest
+      return 'yy$downcast(' + expr + ', xx$' + dest + ')';
     }
   }
 }
@@ -687,11 +832,14 @@ class FuncDef extends Ast {
 }
 
 class ClassDef extends Ast {
-  constructor(token, isNative, name, base, attrs, methods) {
+  constructor(token, isNative, isInterface,
+              name, base, interfs, attrs, methods) {
     super(token);
     this.isNative = isNative;  // bool
+    this.isInterface = isInterface;  // bool
     this.name = name;  // string
     this.base = base;  // string
+    this.interfs = interfs;  // [string]
     this.attrs = attrs;  // [(type:string, name:string)]
     this.methods = methods;  // [FuncDef]
   }
@@ -743,6 +891,35 @@ class Block extends Statement {
   }
 }
 
+class Decl extends Statement {
+  constructor(token, cls, name, expr) {
+    super(token);
+    this.cls = cls;
+    this.name = name;
+    this.expr = expr;
+  }
+  ann(data) {
+    if (this.expr !== null) {
+      this.expr.ann(data);
+      if (!data.castable(this.expr.exprType, this.cls)) {
+        throw new Error(
+            "Tried to initialize variable of type " + this.cls +
+            " with a value of type " + this.expr.exprType);
+      }
+    }
+    data.setVarType(this.name, this.cls);
+    this.data = data;
+  }
+  gen() {
+    if (this.expr === null) {
+      return '\nlet xx$' + this.name + ' = null;';
+    } else {
+      return '\nlet xx$' + this.name + ' = ' + this.data.cast(
+          this.expr.gen(), this.expr.exprType, this.cls) + ';';
+    }
+  }
+}
+
 class Return extends Statement {
   constructor(token, expr) {
     super(token);
@@ -756,9 +933,12 @@ class Return extends Statement {
           "Function returns " + data.getCurRettype() + " but tried to " +
           "return " + this.expr.exprType);
     }
+    this.data = data;
+    this.curtype = data.getCurRettype();
   }
   gen() {
-    return '\nreturn ' + this.expr.gen() + ';';
+    return '\nreturn ' + this.data.cast(
+        this.expr.gen(), this.expr.exprType, this.curtype) + ';';
   }
 }
 
@@ -782,6 +962,34 @@ class Expression extends Ast {
   }
 }
 
+function checkArgtypes(data, expectedTypes, actualTypes, message) {
+  if (message === undefined) {
+    message = '';
+  }
+  if (expectedTypes.length !== actualTypes.length) {
+    throw new Error("Expected " + expectedTypes.length + " args but got " +
+                    actualTypes.length + message);
+  }
+  const len = expectedTypes.length;
+  for (let i = 0; i < len; i++) {
+    if (!data.castable(actualTypes[i], expectedTypes[i])) {
+      throw new Error(
+          "Expected arg " + i + " to be " + expectedTypes[i] + " but got " +
+          actualTypes[i]);
+    }
+  }
+}
+
+function castArgs(data, args, expectedTypes) {
+  const outArgs = [];
+  for (let i = 0; i < expectedTypes.length; i++) {
+    outArgs.push(
+      data.cast(args[i].gen(),
+                args[i].exprType, expectedTypes[i]));
+  }
+  return outArgs;
+}
+
 class FuncCall extends Expression {
   constructor(token, name, args) {
     super(token);
@@ -793,22 +1001,47 @@ class FuncCall extends Expression {
       arg.ann(data);
     }
     this.exprType = data.getRettype(this.name);
-    const argtypes = data.getArgtypes(this.name);
-
-    if (this.args.length !== argtypes.length) {
-      throw new Error(
-          this.name + " expects " + argtypes.length + " arguments but got " +
-          this.args.length);
-    }
+    const actualArgtypes = this.args.map(arg => arg.exprType);
+    checkArgtypes(data, data.getArgtypes(this.name), actualArgtypes);
+    this.data = data;
   }
   gen() {
-    return 'xx$' + this.name + '(' +
-           this.args.map(arg => arg.gen()).join(", ") + ')';
+    const args = castArgs(this.data, this.args,
+                          this.data.getArgtypes(this.name));
+    return 'xx$' + this.name + '(' + args.join(", ") + ')';
   }
 }
 
+// NOTE: mixing int and float arithmetic is illegal by design.
 const PRIMITIVE_METHOD_TABLE = {
+  'int.__add__(int)': ['int', (owner, name, args) => {
+    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
+  }],
+  'int.__sub__(int)': ['int', (owner, name, args) => {
+    return '(' + owner.gen() + ' - ' + args[0].gen() + ')';
+  }],
+  'int.__mul__(int)': ['int', (owner, name, args) => {
+    return '(' + owner.gen() + ' * ' + args[0].gen() + ')';
+  }],
+  'int.__div__(int)': ['int', (owner, name, args) => {
+    return '((' + owner.gen() + ' / ' + args[0].gen() + ')|0)';
+  }],
+  'int.__mod__(int)': ['int', (owner, name, args) => {
+    return '(' + owner.gen() + ' % ' + args[0].gen() + ')';
+  }],
   'float.__add__(float)': ['float', (owner, name, args) => {
+    return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
+  }],
+  'float.__sub__(float)': ['float', (owner, name, args) => {
+    return '(' + owner.gen() + ' - ' + args[0].gen() + ')';
+  }],
+  'float.__mul__(float)': ['float', (owner, name, args) => {
+    return '(' + owner.gen() + ' * ' + args[0].gen() + ')';
+  }],
+  'float.__div__(float)': ['float', (owner, name, args) => {
+    return '(' + owner.gen() + ' / ' + args[0].gen() + ')';
+  }],
+  'string.__add__(string)': ['string', (owner, name, args) => {
     return '(' + owner.gen() + ' + ' + args[0].gen() + ')';
   }],
 };
@@ -863,23 +1096,39 @@ class MethodCall extends Expression {
       }
     } else {
       this.exprType = data.getRettype(name);
-      const argtypes = data.getArgtypes(name);
-
-      if (this.args.length !== argtypes.length) {
-        throw new Error(
-            name + " expects " + argtypes.length + " arguments but got " +
-            this.args.length);
-      }
+      const actualArgtypes = this.args.map(arg => arg.exprType);
+      checkArgtypes(data, data.getArgtypes(name), actualArgtypes);
     }
+    this.data = data;
   }
   gen() {
     if (isPrimitive(this.owner.exprType)) {
       // Primitive types have special hardcoded rules --
       return genPrimitiveMethod(this.owner, this.name, this.args);
     }
-    const args = this.args.map(arg => arg.gen());
+    const name = this.owner.exprType + '.' + this.name;
+    const args = castArgs(this.data, this.args,
+                          this.data.getArgtypes(name));
     return this.owner.gen() + '.xx$' + this.name +
            '(' + args.join(", ") + ')';
+  }
+}
+
+class New extends Expression {
+  constructor(token, cls, args) {
+    super(token);
+    this.cls = cls;
+    this.args = args;
+  }
+  ann(data) {
+    for (const arg of this.args) {
+      arg.ann(data);
+    }
+    this.exprType = this.cls;
+  }
+  gen() {
+    return 'new xx$' + this.cls + '(' +
+           this.args.map(arg => arg.gen()).join(", ") + ')';
   }
 }
 
@@ -889,8 +1138,7 @@ class Int extends Expression {
     this.val = val;
   }
   ann(data) {
-    // NOTE: There is no 'int' type.
-    this.exprType = 'float';
+    this.exprType = 'int';
   }
   gen() {
     return this.val.toString();
@@ -916,10 +1164,10 @@ class Str extends Expression {
     this.val = val;
   }
   ann(data) {
-    this.exprType = 'String';
+    this.exprType = 'string';
   }
   gen() {
-    return 'new xx$String("' + sanitizeString(this.val) + '")';
+    return '"' + sanitizeString(this.val) + '"';
   }
 }
 
@@ -951,9 +1199,11 @@ class Assign extends Expression {
           "Tried to assign " + this.expr.exprType + " to a " +
           this.exprType + " variable");
     }
+    this.data = data;
   }
   gen() {
-    return 'xx$' + this.name + ' = ' + this.expr.gen();
+    return 'xx$' + this.name + ' = ' +
+           this.data.cast(this.expr.gen(), this.expr.exprType, this.exprType);
   }
 }
 
@@ -964,12 +1214,27 @@ function xx$print(x) {
   console.log(x);
 }
 
+function yy$downcast(x, target) {
+  if (!(x instanceof target)) {
+    throw new Error(
+        x.constructor.name.slice(3) + " cannot be cast to " +
+        target.name.slice(3));
+  }
+  return x;
+}
+
 class xx$Object {
+  xx$__repr__() {
+    return '<' + this.constructor.name.slice(3) + ' instance>';
+  }
+  xx$__str__() {
+    return this.xx$__repr__();
+  }
   toString() {
-    return this.xx$__str__().val;
+    return this.xx$__str__();
   }
   inspect() {
-    return this.xx$__repr__().val;
+    return this.xx$__repr__();
   }
 }
 
@@ -979,10 +1244,14 @@ class PrimitiveWrapperType extends xx$Object {
     this.val = val;
   }
   xx$__str__() {
-    return new xx$String(this.val.toString());
+    return this.val.toString();
   }
   xx$__repr__() {
-    return new xx$String(this.val.toString());
+    return this.val.toString();
+  }
+  xx$__eq__(other) {
+    return this.constructor === other.constructor &&
+           this.val === other.val;
   }
 }
 
@@ -991,6 +1260,13 @@ class xx$String extends PrimitiveWrapperType {
     return new xx$String(this.val + str.val);
   }
 }
+
+class xx$Int extends PrimitiveWrapperType {
+}
+
+class xx$Float extends PrimitiveWrapperType {
+}
+
 // END PRELUDE
 `;
 
@@ -998,29 +1274,42 @@ function transpile(code, uri) {
   const module = parse(code, uri);
   const data = new GrokData();
   module.grok(data);
+  data.processInheritanceData();
   module.ann(data);
   return NATIVE_PRELUDE + module.gen() + '\n\nxx$main();';
 }
 const code = `
 
 native class Object {
-  String __str__();
-  String __repr__();
+  string __str__();
+  string __repr__();
+  float __hash__();
+  bool __eq__(Object other);
+  bool __ne__(Object other);
+  bool __lt__(Object other);
+  bool __le__(Object other);
+  bool __gt__(Object other);
+  bool __ge__(Object other);
+  int __len__();
 }
 native class Float extends Object {
   Float __add__(Float other);
   Float __sub__(Float other);
   Float __div__(Float other);
+  bool __eq__(Object other);
+  string __repr__();
 }
 native class String extends Object {
   String __add__(String other);
   String __str__();
   String __repr__();
+  bool __eq__(Object other);
+  float __len__();
 }
 native void print(Object item);
 
 float x;
-String y;
+string y;
 
 void f() {
   print("Hello from function f");
@@ -1031,7 +1320,17 @@ void g(Object x) {
 }
 
 class Sample {
-  float len() { return 5; }
+  int len() { return 5; }
+}
+
+Object z;
+
+string repr(Object x) {
+  return x.__repr__();
+}
+
+int len(Object xx) {
+  return xx.__len__();
 }
 
 void main() {
@@ -1041,12 +1340,17 @@ void main() {
   print(y);
   print(y.__add__(' there'));
   print(1 .__add__(2));
-  print(1 .__add__(2.2));
+  print(1. .__add__(2.2));
+  print(5 .__div__(2));
+  int x = 5;
+  print(x);
+  Sample s = Sample();
+  print(s);
+  print(s.len());
 }
 
 `;
 
 // console.log(lex(code));
-
 console.log(transpile(code));
 })();
