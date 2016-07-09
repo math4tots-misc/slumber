@@ -537,15 +537,22 @@ class GrokData {
       throw new Error("Class " + name + " redeclared");
     }
     this._ancestry[name] = Object.create(null);
-    this._ancestry[name][base] = true;
+    if (base !== null) {
+      this._ancestry[name][base] = true;
+    }
     for (const interf of interfs) {
       this._ancestry[name][interf] = true;
     }
   }
   processInheritanceData() {
     // Must be called after grok finishes but before ann starts.
+    this._processStarted = Object.create(null);
+    this._processed = Object.create(null);
     for (const className in this._ancestry) {
       this._process(className);
+    }
+    for (const className in this._ancestry) {
+      this._mergeMethodSignaturesWithAncestors(className);
     }
   }
   _process(className) {
@@ -562,7 +569,7 @@ class GrokData {
     for (const baseName of Object.keys(this._ancestry[className])) {
       this._ancestry[className][baseName] = true;
     }
-
+    this._processed[className] = true;
   }
   _mergeMethodSignaturesWithAncestors(className) {
     // NOTE: This is probably very bad for very large number of classes and
@@ -614,13 +621,13 @@ class GrokData {
                 key + " accepts " + args.length + " args but " +
                 funcName + " accepts " + baseArgs.length);
           }
-          if (!self.isSubclass(ret, baseRet)) {
+          if (!this.isSubclass(ret, baseRet)) {
             throw new Error(
                 key + " returns " + ret + " args but " +
                 funcName + " returns " + baseRet);
           }
           for (let i = 0; i < args.length; i++) {
-            if (!self.isSubclass(baseArgs[i], args[i])) {
+            if (!this.isSubclass(baseArgs[i], args[i])) {
               throw new Error(
                   key + " accepts " + args[i] + " for arg " + i + " but " +
                   funcName + " accepts " + baseArgs[i] + " for arg " + i);
@@ -629,10 +636,11 @@ class GrokData {
         }
       }
     }
-    this._processed[className] = true;
   }
   isSubclass(subclass, baseclass) {
-    return subclass === baseclass || !!this._ancestry[subclass][baseclass];
+    return subclass === baseclass || (
+        !isPrimitive(subclass) &&
+        !!this._ancestry[subclass][baseclass]);
   }
   pushCurRettype(type) {
     this._currettypestack.push(type);
@@ -666,6 +674,9 @@ class GrokData {
       throw new Error("Redeclaration of function " + name);
     }
     this._funcsigs[name] = [rettype, argtypes];
+  }
+  hasFunc(name) {
+    return !!this._funcsigs[name];
   }
   getFuncsig(name) {
     if (!this._funcsigs[name]) {
@@ -820,7 +831,7 @@ class FuncDef extends Ast {
   }
   gen() {
     if (this.body) {
-      const args = this.args.map(arg => '/*' + arg[0] + '*/ ' + arg[1]);
+      const args = this.args.map(arg => '/*' + arg[0] + '*/ xx$' + arg[1]);
       return ('\nfunction /*' + this.ret + '*/ xx$' + this.name +
               '(' + args.join(",") + ')' +
               this.body.gen());
@@ -848,6 +859,7 @@ class ClassDef extends Ast {
       data.setFuncsig(this.name + '.' + method.name,
                       method.ret, method.getArgtypes());
     }
+    data.declareClass(this.name, this.base, this.interfs);
   }
   ann(data) {
     for (const method of this.methods) {
@@ -1125,10 +1137,28 @@ class New extends Expression {
       arg.ann(data);
     }
     this.exprType = this.cls;
+    if (data.hasFunc(this.cls + ".__init__")) {
+      const actualArgtypes = this.args.map(arg => arg.exprType);
+      checkArgtypes(data, data.getArgtypes(this.cls + ".__init__"),
+                    actualArgtypes);
+    } else {
+      if (this.args.length !== 0) {
+        throw new Error(
+            this.cls + " has no constructor (__init__) but you gave it " +
+            this.args.length + " args");
+      }
+    }
+    this.data = data;
   }
   gen() {
-    return 'new xx$' + this.cls + '(' +
-           this.args.map(arg => arg.gen()).join(", ") + ')';
+    const name = this.cls + '.__init__';
+    if (this.data.hasFunc(name)) {
+      const args = castArgs(this.data, this.args,
+                            this.data.getArgtypes(name));
+      return 'new xx$' + this.cls + '(' + args.join(", ") + ')';
+    } else {
+      return 'new xx$' + this.cls + '()';
+    }
   }
 }
 
@@ -1194,7 +1224,6 @@ class Assign extends Expression {
     this.expr.ann(data);
     this.exprType = data.getVarType(this.name);
     if (!data.castable(this.expr.exprType, this.exprType)) {
-      console.log(this.expr);
       throw new Error(
           "Tried to assign " + this.expr.exprType + " to a " +
           this.exprType + " variable");
@@ -1215,7 +1244,7 @@ function xx$print(x) {
 }
 
 function yy$downcast(x, target) {
-  if (!(x instanceof target)) {
+  if (x !== null && !(x instanceof target)) {
     throw new Error(
         x.constructor.name.slice(3) + " cannot be cast to " +
         target.name.slice(3));
@@ -1224,6 +1253,10 @@ function yy$downcast(x, target) {
 }
 
 class xx$Object {
+  constructor() {
+    this.xx$__init__.apply(this, arguments);
+  }
+  xx$__init__() {}
   xx$__repr__() {
     return '<' + this.constructor.name.slice(3) + ' instance>';
   }
@@ -1241,6 +1274,9 @@ class xx$Object {
 class PrimitiveWrapperType extends xx$Object {
   constructor(val) {
     super();
+    if (val === null) {
+      throw new Error("Null pointer error when boxing primitive type");
+    }
     this.val = val;
   }
   xx$__str__() {
@@ -1301,10 +1337,10 @@ native class Float extends Object {
 }
 native class String extends Object {
   String __add__(String other);
-  String __str__();
-  String __repr__();
+  string __str__();
+  string __repr__();
   bool __eq__(Object other);
-  float __len__();
+  int __len__();
 }
 native void print(Object item);
 
@@ -1323,14 +1359,20 @@ class Sample {
   int len() { return 5; }
 }
 
-Object z;
-
-string repr(Object x) {
-  return x.__repr__();
+class Sample2 {
+  void __init__(Object x) {
+    print("Inside Sample2 init! --> " .__add__(repr(x)));
+  }
 }
 
-int len(Object xx) {
-  return xx.__len__();
+Object z;
+
+string repr(Object sss) {
+  return sss.__repr__();
+}
+
+int len(Object fff) {
+  return fff.__len__();
 }
 
 void main() {
@@ -1347,10 +1389,12 @@ void main() {
   Sample s = Sample();
   print(s);
   print(s.len());
+  Sample2(5);
 }
 
 `;
 
 // console.log(lex(code));
+// console.log(transpile(code));
 console.log(transpile(code));
 })();
