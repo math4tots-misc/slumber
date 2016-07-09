@@ -1,4 +1,6 @@
 /* jshint esversion: 6 */
+(function() {
+"use strict";
 
 class Source {
   constructor(code, uri) {
@@ -59,8 +61,23 @@ function isSpace(ch) {
          ch === '\v';
 }
 
+const PRIMITIVE_TABLE = {
+  void: 'Void', bool: 'Bool', int: 'Int', float: 'Float'
+};
+
 function isPrimitive(str) {
-  return str === 'void' || str === 'bool' || str === 'int' || str === 'float';
+  return !!PRIMITIVE_TABLE[str];
+}
+
+function getWrapperType(prim) {
+  if (!PRIMITIVE_TABLE[prim]) {
+    throw new Error(prim + " is not a primitive type");
+  }
+  return PRIMITIVE_TABLE[prim];
+}
+
+function isWrapperTypeFor(type, prim) {
+  return PRIMITIVE_TABLE[prim] === type;
 }
 
 function isTypename(str) {
@@ -527,7 +544,24 @@ class GrokData {
   }
   castable(src, dest) {
     // TODO: Check inheritance tree to see if src can be cast to dest.
-    return src === dest;
+    return src === dest ||
+           dest === 'Object' ||
+           src === 'Object' ||
+           isWrapperTypeFor(src, dest) ||
+           isWrapperTypeFor(des, src);
+  }
+  cast(expr, src, dest) {
+    // TODO: See castable
+    if (isPrimitive(src) &&
+        (isWrapperTypeFor(dest, src) || dest === 'Object')) {
+      return 'new ' + getWrapperType(src) + '(' + expr + ')';
+    } else if (isPrimitive())
+    if (src === dest || dest === 'Object') {
+      return expr;
+    } else {
+      throw new Error(
+          "Casting from " + src + " to " + dest + " is not yet supported");
+    }
   }
 }
 
@@ -926,26 +960,32 @@ class Assign extends Expression {
   }
 }
 
-const NATIVE_PRELUDE = `
-"use strict";
+const NATIVE_PRELUDE = `"use strict";
 
 // BEGIN NATIVE PRELUDE
 function xx$print(x) {
   console.log(x);
 }
 
-class xx$Object {}
+class xx$Object {
+  toString() {
+    return this.xx$__str__().val;
+  }
+  inspect() {
+    return this.xx$__repr__().val;
+  }
+}
 
 class PrimitiveWrapperType extends xx$Object {
   constructor(val) {
     super();
     this.val = val;
   }
-  toString() {
-    return this.val.toString();
+  xx$__str__() {
+    return new xx$String(this.val.toString());
   }
-  inspect() {
-    return this.toString();
+  xx$__repr__() {
+    return new xx$String(this.val.toString());
   }
 }
 
@@ -966,9 +1006,19 @@ function transpile(code, uri) {
 }
 const code = `
 
-native class Object {}
+native class Object {
+  String __str__();
+  String __repr__();
+}
+native class Float extends Object {
+  Float __add__(Float other);
+  Float __sub__(Float other);
+  Float __div__(Float other);
+}
 native class String extends Object {
   String __add__(String other);
+  String __str__();
+  String __repr__();
 }
 native void print(Object item);
 
@@ -1002,3 +1052,4 @@ void main() {
 // console.log(lex(code));
 
 console.log(transpile(code));
+})();
